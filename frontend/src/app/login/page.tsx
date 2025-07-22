@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 const schema = z.object({
   email: z.string().email(),
@@ -12,6 +13,8 @@ const schema = z.object({
 
 export default function LoginPage() {
   const [serverMessage, setServerMessage] = useState('');
+  const router = useRouter();
+
   const {
     register,
     handleSubmit,
@@ -27,7 +30,12 @@ export default function LoginPage() {
       });
 
       const result = await res.json();
-      setServerMessage(result.message || 'Login successful!');
+      setServerMessage(result.message || '');
+
+      if (res.ok) {
+        // Redirect to homepage on successful login
+        router.push('/');
+      }
     } catch (err) {
       setServerMessage('Error connecting to server.');
     }
