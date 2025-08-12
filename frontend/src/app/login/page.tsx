@@ -26,6 +26,7 @@ export default function LoginPage() {
       const res = await fetch('http://localhost:8000/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',  // <--- Send cookies for session
         body: JSON.stringify(data),
       });
 
@@ -33,8 +34,11 @@ export default function LoginPage() {
       setServerMessage(result.message || '');
 
       if (res.ok) {
-        // Redirect to homepage on successful login
-        router.push('/');
+        if (result.is_admin) {
+          router.push('/employee-section');  // Admin redirected to employee section
+        } else {
+          router.push('/');  // Regular users redirected to homepage
+        }
       }
     } catch (err) {
       setServerMessage('Error connecting to server.');
