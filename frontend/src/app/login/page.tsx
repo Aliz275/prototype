@@ -26,7 +26,7 @@ export default function LoginPage() {
       const res = await fetch('http://localhost:8000/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',  // <--- Send cookies for session
+        credentials: 'include', 
         body: JSON.stringify(data),
       });
 
@@ -34,10 +34,11 @@ export default function LoginPage() {
       setServerMessage(result.message || '');
 
       if (res.ok) {
-        if (result.is_admin) {
-          router.push('/employee-section');  // Admin redirected to employee section
+        // FIXED LOGIC
+        if (result.role === 'org_admin' || result.role === 'super_admin') {
+          router.push('/employee-section'); 
         } else {
-          router.push('/');  // Regular users redirected to homepage
+          router.push('/');
         }
       }
     } catch (err) {
