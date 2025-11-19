@@ -12,6 +12,7 @@ type Assignment = {
   created_by_id?: number;
   is_general: number;
   team_id?: number | null;
+  employee_ids?: number[];
 };
 
 type Submission = {
@@ -22,8 +23,16 @@ type Submission = {
   submitted_at: string;
 };
 
+type UserWithId = {
+  id: number;
+  email: string;
+  role: string;
+};
+
 export default function AssignmentDetailPage() {
   const { user } = useAuth();
+  const currentUser = user as UserWithId;
+
   const { id } = useParams();
   const [assignment, setAssignment] = useState<Assignment | null>(null);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
@@ -42,7 +51,21 @@ export default function AssignmentDetailPage() {
 
         if (!res.ok) throw new Error("Failed to load assignment");
         const data = await res.json();
-        setAssignment(data.assignment);
+        const assignmentData: Assignment = data.assignment;
+
+        // EMPLOYEE ACCESS CONTROL
+        if (currentUser.role === "employee") {
+          const isAssignedToUser =
+            assignmentData.is_general ||
+            (assignmentData.employee_ids?.includes(currentUser.id) ?? false) ||
+            false; // team check will be handled backend ideally
+
+          if (!isAssignedToUser) {
+            throw new Error("You do not have access to this assignment");
+          }
+        }
+
+        setAssignment(assignmentData);
         setSubmissions(data.submissions || []);
       } catch (err: any) {
         setError(err.message);
@@ -52,7 +75,7 @@ export default function AssignmentDetailPage() {
     }
 
     load();
-  }, [id]);
+  }, [id, currentUser.id, currentUser.role]);
 
   async function submitFile() {
     if (!file) return;
@@ -73,6 +96,7 @@ export default function AssignmentDetailPage() {
 
     if (res.ok) {
       setUploadStatus("Uploaded successfully!");
+      setSubmissions([...submissions, data.submission]);
     } else {
       setUploadStatus(data.message || "Upload failed");
     }
@@ -103,7 +127,7 @@ export default function AssignmentDetailPage() {
       )}
 
       {/* EMPLOYEE SUBMISSION */}
-      {user.role === "employee" && (
+      {currentUser.role === "employee" && (
         <div className="mt-6">
           <h2 className="font-semibold mb-2">Submit Work</h2>
           <input
@@ -122,7 +146,9 @@ export default function AssignmentDetailPage() {
       )}
 
       {/* SUBMISSIONS FOR ADMINS / MANAGERS */}
-      {(user.role === "org_admin" || user.role === "team_manager") && (
+      {(currentUser.role === "org_admin" ||
+        currentUser.role === "super_admin" ||
+        currentUser.role === "team_manager") && (
         <div className="mt-10">
           <h2 className="text-xl font-semibold mb-4">Submissions</h2>
           {submissions.length === 0 && <p>No submissions yet.</p>}

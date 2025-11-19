@@ -57,34 +57,60 @@ def init_assignment_routes(app):
 
     @app.route('/api/assignments', methods=['GET'])
     def get_assignments():
-        if 'email' not in session:
+        if 'user_id' not in session:
             return jsonify({'message': 'Unauthorized'}), 401
+
+        user_id = session['user_id']
 
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
-        c.execute('SELECT id FROM users WHERE email = ?', (session['email'],))
-        user = c.fetchone()
-        if not user:
-            conn.close()
-            return jsonify({'message': 'User not found'}), 404
-        
-        user_id = user[0]
-        
-        # Get assignments for the user's team, direct assignments, and general assignments
-        c.execute('''
-            SELECT a.* FROM assignments a
-            LEFT JOIN user_assignments ua ON a.id = ua.assignment_id
-            LEFT JOIN team_members tm ON a.team_id = tm.team_id
-            WHERE a.is_general = 1 OR ua.user_id = ? OR tm.user_id = ?
-        ''', (user_id, user_id))
-        
-        assignments = c.fetchall()
+
+        # Assignments that are general
+        c.execute("SELECT * FROM assignments WHERE is_general = 1")
+        general_assignments = c.fetchall()
+
+        # Assignments for teams the user belongs to
+        c.execute("""
+            SELECT a.*
+            FROM assignments a
+            JOIN team_members tm ON a.team_id = tm.team_id
+            WHERE tm.user_id = ?
+        """, (user_id,))
+        team_assignments = c.fetchall()
+
+        # Assignments directly assigned to the user
+        c.execute("""
+            SELECT a.*
+            FROM assignments a
+            JOIN user_assignments ua ON a.id = ua.assignment_id
+            WHERE ua.user_id = ?
+        """, (user_id,))
+        user_assignments = c.fetchall()
+
+        # Merge all assignments and remove duplicates by id
+        all_assignments = {a[0]: a for a in general_assignments + team_assignments + user_assignments}
+
         conn.close()
-        return jsonify(assignments), 200
+
+        # Map to JSON-friendly format
+        assignments_list = []
+        for a in all_assignments.values():
+            assignments_list.append({
+                'id': a[0],
+                'title': a[1],
+                'description': a[2],
+                'due_date': a[3],
+                'is_general': bool(a[4]),
+                'team_id': a[5],
+                'created_by_id': a[6],
+                'created_at': a[7]
+            })
+
+        return jsonify(assignments_list), 200
 
     @app.route('/api/assignments/<int:assignment_id>/submit', methods=['POST'])
     def submit_assignment(assignment_id):
-        if 'email' not in session:
+        if 'user_id' not in session:
             return jsonify({'message': 'Unauthorized'}), 401
 
         if 'file' not in request.files:
@@ -101,13 +127,7 @@ def init_assignment_routes(app):
 
             conn = sqlite3.connect('database.db')
             c = conn.cursor()
-            c.execute('SELECT id FROM users WHERE email = ?', (session['email'],))
-            user = c.fetchone()
-            if not user:
-                conn.close()
-                return jsonify({'message': 'User not found'}), 404
-            
-            employee_id = user[0]
+            employee_id = session['user_id']
             c.execute('INSERT INTO submissions (assignment_id, employee_id, file_path) VALUES (?, ?, ?)',
                       (assignment_id, employee_id, file_path))
             conn.commit()

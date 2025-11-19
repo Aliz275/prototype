@@ -1,11 +1,14 @@
 import sqlite3
+import os
+
+DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database.db')
 
 def initialize_database():
-    conn = sqlite3.connect('database.db')
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA foreign_keys = ON;")  # enforce foreign key constraints
     c = conn.cursor()
 
     # --- Core Tables ---
-
     c.execute('''CREATE TABLE IF NOT EXISTS organizations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
@@ -39,7 +42,6 @@ def initialize_database():
     )''')
 
     # --- Employee & Assignment Tables ---
-
     c.execute('''CREATE TABLE IF NOT EXISTS employees (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         first_name TEXT NOT NULL,
@@ -85,3 +87,4 @@ def initialize_database():
 
     conn.commit()
     conn.close()
+    print(f"Database initialized at {DB_PATH}")

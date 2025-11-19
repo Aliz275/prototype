@@ -1,16 +1,16 @@
 'use client';
 
-// frontend/context/AuthContext.tsx
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 
 type User = {
+  id: number;        // <--- added
   email: string;
-  role: string; // e.g. 'org_admin' | 'team_manager' | 'employee'
+  role: string;      // e.g. 'org_admin' | 'team_manager' | 'employee'
 } | null;
 
 type AuthContextType = {
   user: User;
-  login: (email: string, role: string) => void;
+  login: (email: string, role: string, id: number) => void;
   logout: () => void;
 };
 
@@ -20,28 +20,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>(null);
 
   useEffect(() => {
-    // Optional: restore user from localStorage
     try {
       const raw = localStorage.getItem('auth_user');
       if (raw) setUser(JSON.parse(raw));
-    } catch {
-      /* ignore */
-    }
+    } catch {}
   }, []);
 
-  function login(email: string, role: string) {
-    const u = { email, role };
+  function login(email: string, role: string, id: number) {
+    const u = { email, role, id };
     setUser(u);
-    try {
-      localStorage.setItem('auth_user', JSON.stringify(u));
-    } catch {}
+    try { localStorage.setItem('auth_user', JSON.stringify(u)); } catch {}
   }
 
   function logout() {
     setUser(null);
-    try {
-      localStorage.removeItem('auth_user');
-    } catch {}
+    try { localStorage.removeItem('auth_user'); } catch {}
   }
 
   return (

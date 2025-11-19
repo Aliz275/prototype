@@ -2,9 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "../../context/AuthContext";
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -23,22 +25,15 @@ export default function LoginPage() {
 
       const data = await response.json();
 
-      // ❌ Backend does NOT return `message`
-      // ✔ Backend returns { error: "Invalid credentials" }
       if (!response.ok) {
         setError(data.error || "Login failed");
         return;
       }
 
-      // ✅ Store user info in localStorage
-      localStorage.setItem("user", JSON.stringify(data));
+      // ✅ FIXED: Pass all 3 arguments
+      login(data.email, data.role, data.id);
 
-      console.log("Logged in user:", data);
-
-      // 👉 BACKEND RETURNS:
-      // { id, email, role, is_admin, organization_id }
-
-      // 🚦 Redirect logic (clean + real)
+      // Redirect based on role
       if (data.role === "super_admin") {
         router.push("/super/dashboard");
         return;
@@ -56,7 +51,6 @@ export default function LoginPage() {
 
       // Default:
       router.push("/assignments");
-
     } catch (err) {
       console.error(err);
       setError("Server error");

@@ -1,3 +1,4 @@
+# backend/app/routes.py
 import sqlite3
 import bcrypt
 from flask import request, jsonify, session
@@ -8,7 +9,7 @@ def init_routes(app):
         data = request.get_json()
         email = data.get('email')
         password = data.get('password')
-        organization_id = data.get('organization_id') # Users must join an organization
+        organization_id = data.get('organization_id')  # Users must join an organization
 
         if not all([email, password, organization_id]):
             return jsonify({'message': 'Email, password, and organization ID are required'}), 400
@@ -19,8 +20,10 @@ def init_routes(app):
             conn = sqlite3.connect('database.db')
             c = conn.cursor()
             # By default, new users are 'employees'. Admins can change this later.
-            c.execute('INSERT INTO users (email, password, organization_id, role) VALUES (?, ?, ?, ?)',
-                      (email, hashed_password, organization_id, 'employee'))
+            c.execute(
+                'INSERT INTO users (email, password, organization_id, role) VALUES (?, ?, ?, ?)',
+                (email, hashed_password, organization_id, 'employee')
+            )
             conn.commit()
             conn.close()
             return jsonify({'message': 'Signup successful!'}), 201
@@ -42,28 +45,36 @@ def init_routes(app):
         user = c.fetchone()
         conn.close()
 
-        if user and bcrypt.checkpw(password.encode('utf-8'), user[1]):
-            session['user_id'] = user[0]
-            session['email'] = email
-            session['role'] = user[2]
-            session['organization_id'] = user[3]
-            # The 'is_admin' flag is now legacy, but we can set it for compatibility
-            # with older parts of the code until they are refactored.
-            session['is_admin'] = (user[2] == 'org_admin' or user[2] == 'super_admin')
-            
-            return jsonify({
-                'message': 'Login successful!',
-                'role': user[2],
-                'organization_id': user[3]
-            }), 200
-        else:
+        if not user:
             return jsonify({'message': 'Invalid email or password'}), 401
+
+        user_id, hashed_password, role, organization_id = user
+
+        if not bcrypt.checkpw(password.encode('utf-8'), hashed_password):
+            return jsonify({'message': 'Invalid email or password'}), 401
+
+        # Save user info in session
+        session['user_id'] = user_id
+        session['email'] = email
+        session['role'] = role
+        session['organization_id'] = organization_id
+        session['is_admin'] = role in ['org_admin', 'super_admin']
+
+        return jsonify({
+            'id': user_id,
+            'email': email,
+            'role': role,
+            'organization_id': organization_id
+        }), 200
 
     @app.route('/api/user', methods=['GET'])
     def get_current_user():
         if 'email' in session:
             return jsonify({
+                'id': session.get('user_id'),
                 'email': session['email'],
+                'role': session.get('role'),
+                'organization_id': session.get('organization_id'),
                 'is_admin': session.get('is_admin', False)
             })
         else:
@@ -71,7 +82,6 @@ def init_routes(app):
 
     @app.route('/api/employees', methods=['GET'])
     def get_employees():
-        # Optional: you can restrict this route as needed
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
         c.execute("SELECT * FROM employees")

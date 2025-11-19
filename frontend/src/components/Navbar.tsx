@@ -1,4 +1,3 @@
-// frontend/components/Navbar.tsx
 'use client';
 
 import Link from 'next/link';
@@ -11,10 +10,7 @@ export default function Navbar() {
   const { user, logout } = useAuth();
 
   function handleLogout() {
-    // Clear client-side auth state
     logout();
-    // Optionally, call backend logout endpoint if you add one:
-    // fetch('http://localhost:8000/api/logout', { method: 'POST', credentials: 'include' });
     router.push('/login');
   }
 
@@ -29,8 +25,7 @@ export default function Navbar() {
 
         {(user?.role === 'org_admin' ||
           user?.role === 'super_admin' ||
-          user?.role === 'team_manager' ||
-          user?.role === 'team-manager') && (
+          user?.role === 'team_manager') && (
           <Link href="/admin/assignments" className="flex items-center">
             <FaUserTie className="mr-1" />
             Admin

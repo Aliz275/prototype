@@ -1,27 +1,56 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../../context/AuthContext';
+
+type Team = {
+  id: number;
+  name: string;
+  manager_id: number; // needed for validation
+};
+
+type UserWithId = {
+  id: number;
+  email: string;
+  role: string;
+};
 
 export default function CreateAssignmentPage() {
   const router = useRouter();
   const { user } = useAuth();
+  const currentUser = user as UserWithId; // TypeScript knows id exists now
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [scope, setScope] = useState<'general' | 'team' | 'individual'>('general');
   const [teamId, setTeamId] = useState('');
-  const [employeeIds, setEmployeeIds] = useState(''); // comma-separated IDs
+  const [employeeIds, setEmployeeIds] = useState('');
+  const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // Check role locally before rendering (backend also enforces)
-  if (!user) {
-    return <div className="p-6">Please log in to create assignments.</div>;
-  }
-  if (!(user.role === 'org_admin' || user.role === 'team_manager' || user.role === 'super_admin')) {
+  // Fetch all teams (needed for team selection validation)
+  useEffect(() => {
+    async function loadTeams() {
+      try {
+        const res = await fetch('http://localhost:8000/api/teams', {
+          credentials: 'include',
+        });
+        if (!res.ok) throw new Error('Failed to fetch teams');
+        const data = await res.json();
+        setTeams(data);
+      } catch (err: any) {
+        console.error(err);
+      }
+    }
+    loadTeams();
+  }, []);
+
+  // Role check
+  if (!user) return <div className="p-6">Please log in to create assignments.</div>;
+  if (!(currentUser.role === 'org_admin' || currentUser.role === 'team_manager' || currentUser.role === 'super_admin')) {
     return <div className="p-6">Access denied: you don't have permission to create assignments.</div>;
   }
 
@@ -38,7 +67,6 @@ export default function CreateAssignmentPage() {
     e.preventDefault();
     setMessage(null);
 
-    // Basic client validation
     if (!title.trim()) { setMessage('Title is required'); return; }
 
     const payload: any = {
@@ -48,19 +76,28 @@ export default function CreateAssignmentPage() {
     };
 
     if (scope === 'team') {
-      payload.team_id = teamId ? Number(teamId) : null;
+      const selectedTeamId = Number(teamId);
+      const team = teams.find(t => t.id === selectedTeamId);
+      if (!team) { setMessage('Team not found'); return; }
+
+      // Team Manager validation
+      if (currentUser.role === 'team_manager' && team.manager_id !== currentUser.id) {
+        setMessage("You can only assign to teams you manage");
+        return;
+      }
+
+      payload.team_id = selectedTeamId;
     } else if (scope === 'individual') {
       const ids = parseEmployeeIds(employeeIds);
       payload.employee_ids = ids;
     }
 
-    // If general, no team or employee ids needed
     setLoading(true);
     try {
       const res = await fetch('http://localhost:8000/api/assignments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        credentials: 'include', // important to send session cookie
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
@@ -73,7 +110,6 @@ export default function CreateAssignmentPage() {
       }
 
       setMessage('Assignment created successfully!');
-      // short delay then redirect back to assignments list
       setTimeout(() => router.push('/assignments'), 900);
     } catch (err: any) {
       setMessage(`Network error: ${err.message || err}`);
@@ -131,7 +167,7 @@ export default function CreateAssignmentPage() {
           <button type="submit" disabled={loading} className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-60">
             {loading ? 'Creating…' : 'Create Assignment'}
           </button>
-          <button type="button" onClick={() => { /* reset form */ setTitle(''); setDescription(''); setDueDate(''); setScope('general'); setTeamId(''); setEmployeeIds(''); setMessage(null); }} className="px-3 py-2 border rounded">
+          <button type="button" onClick={() => { setTitle(''); setDescription(''); setDueDate(''); setScope('general'); setTeamId(''); setEmployeeIds(''); setMessage(null); }} className="px-3 py-2 border rounded">
             Reset
           </button>
         </div>
