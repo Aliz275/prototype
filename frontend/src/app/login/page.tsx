@@ -1,77 +1,91 @@
-'use client';
+"use client";
 
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-
-const schema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-});
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
-  const [serverMessage, setServerMessage] = useState('');
   const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
 
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm({ resolver: zodResolver(schema) });
+  async function handleLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
 
-  const onSubmit = async (data: any) => {
     try {
-      const res = await fetch('http://localhost:8000/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include', 
-        body: JSON.stringify(data),
+      const response = await fetch("http://localhost:8000/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email, password }),
       });
 
-      const result = await res.json();
-      setServerMessage(result.message || '');
+      const data = await response.json();
 
-      if (res.ok) {
-        // FIXED LOGIC
-        if (result.role === 'org_admin' || result.role === 'super_admin') {
-          router.push('/employee-section'); 
-        } else {
-          router.push('/');
-        }
+      // ❌ Backend does NOT return `message`
+      // ✔ Backend returns { error: "Invalid credentials" }
+      if (!response.ok) {
+        setError(data.error || "Login failed");
+        return;
       }
+
+      // ✅ Store user info in localStorage
+      localStorage.setItem("user", JSON.stringify(data));
+
+      console.log("Logged in user:", data);
+
+      // 👉 BACKEND RETURNS:
+      // { id, email, role, is_admin, organization_id }
+
+      // 🚦 Redirect logic (clean + real)
+      if (data.role === "super_admin") {
+        router.push("/super/dashboard");
+        return;
+      }
+
+      if (data.role === "org_admin") {
+        router.push("/org/dashboard");
+        return;
+      }
+
+      if (data.role === "team_manager") {
+        router.push("/manager/dashboard");
+        return;
+      }
+
+      // Default:
+      router.push("/assignments");
+
     } catch (err) {
-      setServerMessage('Error connecting to server.');
+      console.error(err);
+      setError("Server error");
     }
-  };
+  }
 
   return (
-    <main className="max-w-md mx-auto mt-20">
-      <h2 className="text-2xl font-bold mb-4">Login</h2>
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        <div>
-          <input
-            placeholder="Email"
-            {...register('email')}
-            className="w-full p-2 border rounded"
-          />
-          {errors.email && <p className="text-red-500">{errors.email.message as string}</p>}
-        </div>
-        <div>
-          <input
-            placeholder="Password"
-            type="password"
-            {...register('password')}
-            className="w-full p-2 border rounded"
-          />
-          {errors.password && <p className="text-red-500">{errors.password.message as string}</p>}
-        </div>
-        <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded">
-          Login
-        </button>
-        {serverMessage && <p>{serverMessage}</p>}
+    <div style={{ padding: "50px" }}>
+      <h1>Login</h1>
+
+      {error && <p style={{ color: "red" }}>{error}</p>}
+
+      <form onSubmit={handleLogin}>
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        /><br /><br />
+
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        /><br /><br />
+
+        <button type="submit">Login</button>
       </form>
-    </main>
+    </div>
   );
 }
