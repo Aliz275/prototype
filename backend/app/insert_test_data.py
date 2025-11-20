@@ -12,8 +12,8 @@ def insert_test_data():
     users = [
         ("admin@test.com", "password123", "org_admin", 1),
         ("manager@test.com", "password123", "team_manager", 1),
-        ("employee@test.com", "password123", "employee", 1),
-        ("employee2@test.com", "password123", "employee", 1)
+        ("employee1@test.com", "password123", "employee", 1),
+        ("employee2@test.com", "password123", "employee", 2)
     ]
 
     for email, pwd, role, org_id in users:

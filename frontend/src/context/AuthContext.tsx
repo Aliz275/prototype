@@ -3,9 +3,9 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 
 type User = {
-  id: number;        // <--- added
+  id: number;
   email: string;
-  role: string;      // e.g. 'org_admin' | 'team_manager' | 'employee'
+  role: string;      // 'org_admin' | 'team_manager' | 'employee'
 } | null;
 
 type AuthContextType = {
@@ -19,17 +19,35 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>(null);
 
+  // Load user from localStorage on mount
   useEffect(() => {
     try {
       const raw = localStorage.getItem('auth_user');
-      if (raw) setUser(JSON.parse(raw));
-    } catch {}
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.id && parsed.email && parsed.role) {
+          setUser(parsed);
+        } else {
+          setUser(null);
+        }
+      }
+    } catch {
+      setUser(null);
+    }
   }, []);
 
   function login(email: string, role: string, id: number) {
+    if (!id) {
+      console.warn("Login called without a valid user ID");
+      return;
+    }
+
     const u = { email, role, id };
     setUser(u);
-    try { localStorage.setItem('auth_user', JSON.stringify(u)); } catch {}
+
+    try {
+      localStorage.setItem('auth_user', JSON.stringify(u));
+    } catch {}
   }
 
   function logout() {

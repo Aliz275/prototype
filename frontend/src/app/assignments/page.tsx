@@ -14,21 +14,18 @@ type Assignment = {
   employee_ids?: number[];
 };
 
-type UserWithId = {
-  id: number;
-  email: string;
-  role: string;
-};
-
 export default function AssignmentsPage() {
-  const { user } = useAuth();
-  const currentUser = user as UserWithId;
-
+  const { user } = useAuth(); // user can be null
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // runtime guard + narrowed currentUser
   useEffect(() => {
+    if (!user) return; // stop if user is not logged in
+
+    const currentUser = user; // TS now knows this is not null
+
     async function loadAssignments() {
       setLoading(true);
       try {
@@ -36,20 +33,20 @@ export default function AssignmentsPage() {
           credentials: "include",
         });
         if (!res.ok) throw new Error("Failed to load assignments");
+
         const data = await res.json();
+        const allAssignments: Assignment[] = data.assignments ?? [];
 
-        let filtered: Assignment[] = data.assignments;
-
-        // EMPLOYEE ACCESS CONTROL
+        // Optional frontend filtering for employee-specific logic
+        let filtered: Assignment[] = allAssignments;
         if (currentUser.role === "employee") {
-          filtered = filtered.filter(
-            (a: Assignment) =>
+          filtered = allAssignments.filter(
+            (a) =>
               a.is_general ||
               (a.employee_ids?.includes(currentUser.id) ?? false)
           );
         }
 
-        // Managers and admins can see everything returned from backend
         setAssignments(filtered);
       } catch (err: any) {
         setError(err.message || "Error fetching assignments");
@@ -59,18 +56,26 @@ export default function AssignmentsPage() {
     }
 
     loadAssignments();
-  }, [currentUser.id, currentUser.role]);
+  }, [user]);
 
-  if (!user) {
-    return <p className="p-6">Please log in to see assignments.</p>;
-  }
-
+  // Render guards
+  if (!user) return <p className="p-6">Please log in to see assignments.</p>;
   if (loading) return <p className="p-6">Loading…</p>;
   if (error) return <p className="p-6 text-red-500">{error}</p>;
 
   return (
     <main className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">Assignments</h1>
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold">Assignments</h1>
+        {(user.role === "org_admin" || user.role === "team_manager") && (
+          <Link
+            href="/assignments/manage"
+            className="bg-blue-600 text-white px-4 py-2 rounded"
+          >
+            Manage Assignments
+          </Link>
+        )}
+      </div>
 
       {assignments.length === 0 ? (
         <p>No assignments available.</p>
