@@ -1,3 +1,4 @@
+# backend/app/assignment_routes.py
 import sqlite3
 from flask import request, jsonify, session
 import os
@@ -11,6 +12,11 @@ def init_assignment_routes(app):
         os.makedirs(UPLOAD_FOLDER)
     app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
+    def _get_employee_ids_for_assignment(c, assignment_id):
+        c.execute('SELECT user_id FROM user_assignments WHERE assignment_id = ?', (assignment_id,))
+        rows = c.fetchall()
+        return [r[0] for r in rows]
+
     # ---------------- CREATE ASSIGNMENT ----------------
     @app.route('/api/assignments', methods=['POST'])
     @role_required(['org_admin', 'team_manager'])
@@ -22,9 +28,16 @@ def init_assignment_routes(app):
         employee_ids = data.get('employee_ids', [])
         team_id = data.get('team_id')
 
+        # normalize employee_ids to list of ints
+        if isinstance(employee_ids, str):
+            # if UI accidentally sent comma-separated string
+            employee_ids = [int(x) for x in employee_ids.split(',') if x.strip().isdigit()]
+        elif not isinstance(employee_ids, list):
+            employee_ids = []
+
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
-        c.execute('SELECT id, role FROM users WHERE email = ?', (session['email'],))
+        c.execute('SELECT id, role FROM users WHERE email = ?', (session.get('email'),))
         user = c.fetchone()
         if not user:
             conn.close()
@@ -43,18 +56,22 @@ def init_assignment_routes(app):
         is_general = not employee_ids and not team_id
 
         c.execute('INSERT INTO assignments (title, description, created_by_id, due_date, is_general, team_id) VALUES (?, ?, ?, ?, ?, ?)',
-                  (title, description, user_id, due_date, is_general, team_id))
+                  (title, description, user_id, due_date, int(is_general), team_id))
         assignment_id = c.lastrowid
 
         # Insert employee assignments if any
         if employee_ids:
             for emp_id in employee_ids:
+                try:
+                    emp_int = int(emp_id)
+                except Exception:
+                    continue
                 c.execute('INSERT INTO user_assignments (user_id, assignment_id) VALUES (?, ?)',
-                          (emp_id, assignment_id))
+                          (emp_int, assignment_id))
 
         conn.commit()
         conn.close()
-        return jsonify({'message': 'Assignment created successfully!'}), 201
+        return jsonify({'message': 'Assignment created successfully!', 'assignment_id': assignment_id}), 201
 
     # ---------------- GET ALL ASSIGNMENTS ----------------
     @app.route('/api/assignments', methods=['GET'])
@@ -75,33 +92,37 @@ def init_assignment_routes(app):
         # Fetch assignments based on role
         if role == 'org_admin':
             c.execute('SELECT * FROM assignments')
+            assignments = c.fetchall()
         elif role == 'team_manager':
             c.execute('''
                 SELECT a.* FROM assignments a
                 LEFT JOIN teams t ON a.team_id = t.id
                 WHERE a.is_general = 1 OR t.manager_id = ?
             ''', (user_id,))
+            assignments = c.fetchall()
         else:  # employee
             c.execute('''
-                SELECT a.* FROM assignments a
+                SELECT DISTINCT a.* FROM assignments a
                 LEFT JOIN user_assignments ua ON a.id = ua.assignment_id
                 LEFT JOIN team_members tm ON a.team_id = tm.team_id
                 WHERE a.is_general = 1 OR ua.user_id = ? OR tm.user_id = ?
             ''', (user_id, user_id))
-
-        assignments = c.fetchall()
-        conn.close()
+            assignments = c.fetchall()
 
         assignments_list = []
         for a in assignments:
+            aid = a[0]
+            employee_ids = _get_employee_ids_for_assignment(c, aid)
             assignments_list.append({
-                'id': a[0],
+                'id': aid,
                 'title': a[1],
                 'description': a[2],
                 'due_date': a[3],
                 'is_general': a[4],
-                'team_id': a[5]
+                'team_id': a[5],
+                'employee_ids': employee_ids
             })
+        conn.close()
         return jsonify({'assignments': assignments_list}), 200
 
     # ---------------- GET SINGLE ASSIGNMENT ----------------
@@ -139,6 +160,8 @@ def init_assignment_routes(app):
                 conn.close()
                 return jsonify({'message': 'Unauthorized: Cannot access this assignment'}), 403
 
+        employee_ids = _get_employee_ids_for_assignment(c, assignment_id)
+
         conn.close()
         return jsonify({'assignment': {
             'id': assignment[0],
@@ -146,7 +169,8 @@ def init_assignment_routes(app):
             'description': assignment[2],
             'due_date': assignment[3],
             'is_general': assignment[4],
-            'team_id': assignment[5]
+            'team_id': assignment[5],
+            'employee_ids': employee_ids
         }}), 200
 
     # ---------------- UPDATE ASSIGNMENT ----------------
@@ -160,19 +184,29 @@ def init_assignment_routes(app):
         employee_ids = data.get('employee_ids', [])
         team_id = data.get('team_id', None)
 
+        # normalize employee_ids to list of ints
+        if isinstance(employee_ids, str):
+            employee_ids = [int(x) for x in employee_ids.split(',') if x.strip().isdigit()]
+        elif not isinstance(employee_ids, list):
+            employee_ids = []
+
         is_general = not employee_ids and not team_id
 
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
         c.execute('UPDATE assignments SET title = ?, description = ?, due_date = ?, is_general = ?, team_id = ? WHERE id = ?',
-                  (title, description, due_date, is_general, team_id, assignment_id))
+                  (title, description, due_date, int(is_general), team_id, assignment_id))
 
         # Clear old user assignments
         c.execute('DELETE FROM user_assignments WHERE assignment_id = ?', (assignment_id,))
         if employee_ids:
             for emp_id in employee_ids:
+                try:
+                    emp_int = int(emp_id)
+                except Exception:
+                    continue
                 c.execute('INSERT INTO user_assignments (user_id, assignment_id) VALUES (?, ?)',
-                          (emp_id, assignment_id))
+                          (emp_int, assignment_id))
 
         conn.commit()
         conn.close()
