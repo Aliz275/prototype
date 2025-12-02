@@ -11,7 +11,12 @@ def init_user_routes(app):
     def get_user_profile(user_id):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute("SELECT id, email, role FROM users WHERE id = ?", (user_id,))
+        c.execute("""
+            SELECT u.id, u.email, u.role, e.first_name, e.last_name, e.position
+            FROM users u
+            LEFT JOIN employees e ON u.id = e.user_id
+            WHERE u.id = ?
+        """, (user_id,))
         user = c.fetchone()
         conn.close()
 
@@ -21,5 +26,8 @@ def init_user_routes(app):
         return jsonify({
             'id': user[0],
             'email': user[1],
-            'role': user[2]
+            'role': user[2],
+            'first_name': user[3],
+            'last_name': user[4],
+            'position': user[5]
         }), 200

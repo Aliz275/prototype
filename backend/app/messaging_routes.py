@@ -14,6 +14,7 @@ def init_messaging_routes(app, socketio):
         data = request.get_json()
         participant_ids = data.get('participant_ids')
         user_id = session.get('user_id')
+        role = session.get('role')
 
         if not participant_ids:
             return jsonify({'message': 'Participant IDs are required'}), 400
@@ -23,6 +24,10 @@ def init_messaging_routes(app, socketio):
         participant_ids = list(set(participant_ids))
 
         is_group_chat = len(participant_ids) > 2
+        
+        if is_group_chat and role not in ['manager', 'admin']:
+            return jsonify({'message': 'Only managers and admins can create group chats'}), 403
+            
         name = data.get('name') if is_group_chat else None
 
         conn = sqlite3.connect(DB_PATH)
@@ -106,6 +111,86 @@ def init_messaging_routes(app, socketio):
 
         socketio.emit('new_message', {'conversation_id': conversation_id, 'message': {'id': message_id, 'content': content, 'sender_email': sender_email, 'created_at': created_at}}, room=f'conversation_{conversation_id}')
         return jsonify({'message': 'Message sent successfully'}), 201
+
+    @app.route('/api/messages/<int:message_id>', methods=['DELETE'])
+    @role_required(['employee', 'manager', 'admin'])
+    def delete_message(message_id):
+        user_id = session.get('user_id')
+        role = session.get('role')
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT sender_id, conversation_id FROM messages WHERE id = ?", (message_id,))
+        message = c.fetchone()
+        if not message:
+            conn.close()
+            return jsonify({'message': 'Message not found'}), 404
+
+        sender_id, conversation_id = message
+        
+        c.execute("SELECT is_group_chat FROM conversations WHERE id = ?", (conversation_id,))
+        conversation = c.fetchone()
+        is_group_chat = conversation[0]
+
+        if user_id == sender_id or (role in ['manager', 'admin'] and is_group_chat):
+            c.execute("UPDATE messages SET is_deleted = 1 WHERE id = ?", (message_id,))
+            conn.commit()
+            conn.close()
+            socketio.emit('message_deleted', {'message_id': message_id, 'conversation_id': conversation_id}, room=f'conversation_{conversation_id}')
+            return jsonify({'message': 'Message deleted successfully'}), 200
+        else:
+            conn.close()
+            return jsonify({'message': 'Unauthorized to delete this message'}), 403
+
+    @app.route('/api/messages/<int:message_id>', methods=['PUT'])
+    @role_required(['employee', 'manager', 'admin'])
+    def edit_message(message_id):
+        data = request.get_json()
+        content = data.get('content')
+        user_id = session.get('user_id')
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT sender_id, conversation_id FROM messages WHERE id = ?", (message_id,))
+        message = c.fetchone()
+        if not message:
+            conn.close()
+            return jsonify({'message': 'Message not found'}), 404
+        
+        sender_id, conversation_id = message
+
+        if user_id != sender_id:
+            conn.close()
+            return jsonify({'message': 'You can only edit your own messages'}), 403
+
+        c.execute("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", (content, datetime.utcnow(), message_id))
+        conn.commit()
+        conn.close()
+        socketio.emit('message_edited', {'message_id': message_id, 'conversation_id': conversation_id, 'content': content}, room=f'conversation_{conversation_id}')
+        return jsonify({'message': 'Message edited successfully'}), 200
+
+    @app.route('/api/conversations/<int:conversation_id>/participants', methods=['POST'])
+    @role_required(['manager', 'admin'])
+    def add_participant(conversation_id):
+        data = request.get_json()
+        user_id = data.get('user_id')
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)", (conversation_id, user_id))
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Participant added successfully'}), 201
+
+    @app.route('/api/conversations/<int:conversation_id>/participants/<int:user_id>', methods=['DELETE'])
+    @role_required(['manager', 'admin'])
+    def remove_participant(conversation_id, user_id):
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("DELETE FROM conversation_participants WHERE conversation_id = ? AND user_id = ?", (conversation_id, user_id))
+        conn.commit()
+        conn.close()
+        return jsonify({'message': 'Participant removed successfully'}), 200
     
     @socketio.on('join')
     def on_join(data):
@@ -116,3 +201,58 @@ def init_messaging_routes(app, socketio):
     def on_leave(data):
         conversation_id = data['conversation_id']
         leave_room(f'conversation_{conversation_id}')
+
+    @socketio.on('connect')
+    def on_connect():
+        user_id = session.get('user_id')
+        if user_id:
+            # Broadcast to other users that this user is online
+            emit('user_status', {'user_id': user_id, 'status': 'online'}, broadcast=True)
+
+    @socketio.on('disconnect')
+    def on_disconnect():
+        user_id = session.get('user_id')
+        if user_id:
+            # Broadcast to other users that this user is offline
+            emit('user_status', {'user_id': user_id, 'status': 'offline'}, broadcast=True)
+
+    @socketio.on('read_message')
+    def on_read_message(data):
+        user_id = session.get('user_id')
+        message_id = data.get('message_id')
+        conversation_id = data.get('conversation_id')
+        if user_id and message_id:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            try:
+                c.execute("INSERT INTO message_read_status (message_id, user_id) VALUES (?, ?)", (message_id, user_id))
+                conn.commit()
+                # Notify others in the conversation that the message has been read
+                emit('message_read', {'user_id': user_id, 'message_id': message_id}, room=f'conversation_{conversation_id}')
+            except sqlite3.IntegrityError:
+                # The user has already read this message
+                pass
+            finally:
+                conn.close()
+    
+    @app.route('/api/search/messages', methods=['GET'])
+    @role_required(['employee', 'manager', 'admin'])
+    def search_messages():
+        query = request.args.get('q')
+        user_id = session.get('user_id')
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("""
+            SELECT m.id, m.content, m.created_at, u.email as sender_email, c.id as conversation_id
+            FROM messages m
+            JOIN users u ON m.sender_id = u.id
+            JOIN conversations c ON m.conversation_id = c.id
+            JOIN conversation_participants cp ON c.id = cp.conversation_id
+            WHERE cp.user_id = ? AND m.content LIKE ? AND m.is_deleted = 0
+            ORDER BY m.created_at DESC
+        """, (user_id, f'%{query}%'))
+        messages = c.fetchall()
+        conn.close()
+
+        return jsonify(messages)

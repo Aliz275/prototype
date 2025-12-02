@@ -110,9 +110,18 @@ def initialize_database():
         sender_id INTEGER NOT NULL,
         content TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP,
         is_deleted INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (conversation_id) REFERENCES conversations (id),
         FOREIGN KEY (sender_id) REFERENCES users (id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS message_read_status (
+        message_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        PRIMARY KEY (message_id, user_id),
+        FOREIGN KEY (message_id) REFERENCES messages (id),
+        FOREIGN KEY (user_id) REFERENCES users (id)
     )''')
 
     conn.commit()
