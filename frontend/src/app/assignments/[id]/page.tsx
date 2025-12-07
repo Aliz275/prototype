@@ -20,6 +20,7 @@ type Submission = {
   employee_id: number;
   file_path: string;
   submitted_at: string;
+  status: string;
   employee_email?: string;
 };
 
@@ -85,7 +86,7 @@ export default function AssignmentDetailPage() {
 
   function alreadySubmitted(): boolean {
     if (!currentUser) return false;
-    return submissions.some(s => s.employee_id === currentUser.id);
+    return submissions.some((s) => s.employee_id === currentUser.id);
   }
 
   async function handleUpload(e: React.FormEvent) {
@@ -121,9 +122,38 @@ export default function AssignmentDetailPage() {
     }
   }
 
+  async function handleAccept(submissionId: number) {
+    try {
+      const res = await fetch(
+        `http://localhost:8000/api/submissions/${submissionId}/accept`,
+        { method: "POST", credentials: "include" }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Accept failed");
+      await fetchSubmissions();
+    } catch (err: any) {
+      console.error("Accept error:", err);
+    }
+  }
+
+  async function handleDelete(submissionId: number) {
+    try {
+      const res = await fetch(
+        `http://localhost:8000/api/submissions/delete/${submissionId}`,
+        { method: "DELETE", credentials: "include" }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Delete failed");
+      await fetchSubmissions();
+    } catch (err: any) {
+      console.error("Delete error:", err);
+    }
+  }
+
   function downloadUrl(filename: string) {
-    // direct download endpoint
-    return `http://localhost:8000/api/submissions/download/${encodeURIComponent(filename)}`;
+    return `http://localhost:8000/api/submissions/download/${encodeURIComponent(
+      filename
+    )}`;
   }
 
   if (!currentUser) return <p className="p-6">Please log in to see this assignment.</p>;
@@ -134,23 +164,21 @@ export default function AssignmentDetailPage() {
   return (
     <main className="p-6 max-w-3xl mx-auto">
       <h1 className="text-2xl font-bold mb-4">{assignment.title}</h1>
-      {assignment.due_date && <p className="text-sm text-gray-500">Due: {assignment.due_date}</p>}
-      <p className="mb-4">{assignment.description}</p>
+      {assignment.due_date && <p className="text-sm text-gray-400">Due: {assignment.due_date}</p>}
+      <p className="mb-6">{assignment.description}</p>
 
       <section className="mb-6">
         <h2 className="text-lg font-semibold mb-2">Submissions</h2>
 
-        {/* status */}
         <p className="mb-2">
           Status:{" "}
           {alreadySubmitted() ? (
-            <span className="text-green-600 font-semibold">Already submitted</span>
+            <span className="text-green-500 font-semibold">Already submitted</span>
           ) : (
-            <span className="text-gray-700">Not submitted</span>
+            <span className="text-gray-400">Not submitted</span>
           )}
         </p>
 
-        {/* upload form for employees (and admins/managers) */}
         <form onSubmit={handleUpload} className="mb-4">
           <label className="block mb-1 font-medium">Upload file</label>
           <input
@@ -162,14 +190,17 @@ export default function AssignmentDetailPage() {
             <button
               type="submit"
               disabled={uploading}
-              className="bg-blue-600 text-white px-3 py-1 rounded"
+              className="bg-blue-800 text-white px-3 py-1 rounded hover:bg-blue-700 transition"
             >
               {uploading ? "Uploading…" : "Upload"}
             </button>
             <button
               type="button"
-              onClick={() => { setUploadFile(null); setMessage(""); }}
-              className="px-3 py-1 border rounded"
+              onClick={() => {
+                setUploadFile(null);
+                setMessage("");
+              }}
+              className="px-3 py-1 border rounded hover:bg-gray-100 transition"
             >
               Clear
             </button>
@@ -177,26 +208,58 @@ export default function AssignmentDetailPage() {
           {message && <p className="mt-2 text-sm">{message}</p>}
         </form>
 
-        {/* list submissions - employees see their own; managers/admins see all */}
         {submissions.length === 0 ? (
           <p>No submissions yet.</p>
         ) : (
           <ul className="space-y-2">
             {submissions.map((s) => (
-              <li key={s.id} className="border p-2 rounded flex justify-between items-center">
+              <li
+                key={s.id}
+                className="border p-3 rounded flex justify-between items-center bg-gray-900 text-white"
+              >
                 <div>
                   <div className="font-semibold">{s.employee_email ?? `User ${s.employee_id}`}</div>
-                  <div className="text-sm text-gray-500">{s.submitted_at ?? ""}</div>
+                  <div className="text-sm text-gray-400">
+                    {s.submitted_at ?? ""} | Status:{" "}
+                    <span
+                      className={
+                        s.status === "accepted"
+                          ? "text-green-400 font-bold"
+                          : "text-yellow-400 font-bold"
+                      }
+                    >
+                      {s.status}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex gap-2 items-center">
                   <a
                     href={downloadUrl(s.file_path)}
-                    className="text-blue-600 underline"
+                    className="text-blue-400 underline"
                     target="_blank"
                     rel="noreferrer"
                   >
                     Download
                   </a>
+
+                  {(currentUser.role === "org_admin" ||
+                    currentUser.role === "super_admin" ||
+                    currentUser.role === "team_manager") && (
+                    <>
+                      <button
+                        onClick={() => handleAccept(s.id)}
+                        className="bg-green-700 px-2 py-1 rounded hover:bg-green-600 transition"
+                      >
+                        Accept
+                      </button>
+                      <button
+                        onClick={() => handleDelete(s.id)}
+                        className="bg-red-700 px-2 py-1 rounded hover:bg-red-600 transition"
+                      >
+                        Delete
+                      </button>
+                    </>
+                  )}
                 </div>
               </li>
             ))}
