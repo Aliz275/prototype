@@ -3,18 +3,20 @@ import os
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database.db')
 
+
 def initialize_database():
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("PRAGMA foreign_keys = ON;")  # enforce foreign key constraints
+    conn.execute("PRAGMA foreign_keys = ON;")
     c = conn.cursor()
 
-    # --- Core Tables ---
+    # --- Organizations ---
     c.execute('''CREATE TABLE IF NOT EXISTS organizations (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
 
+    # --- Users ---
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         email TEXT UNIQUE NOT NULL,
@@ -24,6 +26,7 @@ def initialize_database():
         FOREIGN KEY (organization_id) REFERENCES organizations (id)
     )''')
 
+    # --- Teams ---
     c.execute('''CREATE TABLE IF NOT EXISTS teams (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -33,6 +36,7 @@ def initialize_database():
         FOREIGN KEY (manager_id) REFERENCES users (id)
     )''')
 
+    # --- Team Members ---
     c.execute('''CREATE TABLE IF NOT EXISTS team_members (
         user_id INTEGER NOT NULL,
         team_id INTEGER NOT NULL,
@@ -41,7 +45,7 @@ def initialize_database():
         FOREIGN KEY (team_id) REFERENCES teams (id)
     )''')
 
-    # --- Employee & Assignment Tables ---
+    # --- Employees ---
     c.execute('''CREATE TABLE IF NOT EXISTS employees (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         first_name TEXT NOT NULL,
@@ -54,6 +58,7 @@ def initialize_database():
         FOREIGN KEY (user_id) REFERENCES users (id)
     )''')
 
+    # --- Assignments ---
     c.execute('''CREATE TABLE IF NOT EXISTS assignments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -67,6 +72,7 @@ def initialize_database():
         FOREIGN KEY (created_by_id) REFERENCES users (id)
     )''')
 
+    # --- User Assignments ---
     c.execute('''CREATE TABLE IF NOT EXISTS user_assignments (
         user_id INTEGER NOT NULL,
         assignment_id INTEGER NOT NULL,
@@ -75,16 +81,25 @@ def initialize_database():
         FOREIGN KEY (assignment_id) REFERENCES assignments (id)
     )''')
 
+    # --- Submissions ---
     c.execute('''CREATE TABLE IF NOT EXISTS submissions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         assignment_id INTEGER NOT NULL,
         employee_id INTEGER NOT NULL,
         file_path TEXT NOT NULL,
         submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'pending',         -- pending / accepted / graded
+        graded_by INTEGER NULL,                -- user_id who graded
+        graded_at TIMESTAMP NULL,              -- timestamp when graded
         FOREIGN KEY (assignment_id) REFERENCES assignments (id),
-        FOREIGN KEY (employee_id) REFERENCES users (id)
+        FOREIGN KEY (employee_id) REFERENCES users (id),
+        FOREIGN KEY (graded_by) REFERENCES users (id)
     )''')
 
     conn.commit()
     conn.close()
     print(f"Database initialized at {DB_PATH}")
+
+
+if __name__ == "__main__":
+    initialize_database()
