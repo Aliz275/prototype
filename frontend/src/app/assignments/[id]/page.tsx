@@ -112,11 +112,11 @@ export default function AssignmentDetailPage() {
         throw new Error(data.message || "Upload failed");
       }
 
-      setMessage("Uploaded successfully.");
+      setMessage("Uploaded successfully 🎉");
       setUploadFile(null);
       await fetchSubmissions();
     } catch (err: any) {
-      setMessage(err.message || "Upload error");
+      setMessage(err.message || "Upload error ❌");
     } finally {
       setUploading(false);
     }
@@ -156,114 +156,140 @@ export default function AssignmentDetailPage() {
     )}`;
   }
 
-  if (!currentUser) return <p className="p-6">Please log in to see this assignment.</p>;
-  if (loading) return <p className="p-6">Loading…</p>;
-  if (error) return <p className="p-6 text-red-500">{error}</p>;
-  if (!assignment) return <p className="p-6">Assignment not found.</p>;
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "pending":
+        return "bg-yellow-200 text-yellow-800";
+      case "accepted":
+        return "bg-green-700 text-white";
+      case "graded":
+        return "bg-blue-700 text-white";
+      default:
+        return "bg-gray-500 text-white";
+    }
+  };
+
+  if (!currentUser)
+    return (
+      <p className="p-6 text-center text-gray-400">
+        Please log in to see this assignment.
+      </p>
+    );
+  if (loading) return <p className="p-6 text-center">Loading…</p>;
+  if (error) return <p className="p-6 text-center text-red-500">{error}</p>;
+  if (!assignment) return <p className="p-6 text-center">Assignment not found.</p>;
 
   return (
-    <main className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-2xl font-bold mb-4">{assignment.title}</h1>
-      {assignment.due_date && <p className="text-sm text-gray-400">Due: {assignment.due_date}</p>}
-      <p className="mb-6">{assignment.description}</p>
+    <main className="p-6 max-w-4xl mx-auto space-y-6">
+      {/* Assignment Header */}
+      <div className="bg-gradient-to-r from-blue-900 to-blue-700 text-white rounded-xl p-6 shadow-lg animate-fadeIn">
+        <h1 className="text-3xl font-bold">{assignment.title}</h1>
+        {assignment.due_date && (
+          <p className="text-sm mt-1 text-blue-200">Due: {assignment.due_date}</p>
+        )}
+        <p className="mt-3 text-blue-100">{assignment.description}</p>
+      </div>
 
-      <section className="mb-6">
-        <h2 className="text-lg font-semibold mb-2">Submissions</h2>
-
-        <p className="mb-2">
-          Status:{" "}
-          {alreadySubmitted() ? (
-            <span className="text-green-500 font-semibold">Already submitted</span>
-          ) : (
-            <span className="text-gray-400">Not submitted</span>
-          )}
-        </p>
-
-        <form onSubmit={handleUpload} className="mb-4">
-          <label className="block mb-1 font-medium">Upload file</label>
+      {/* Upload Section */}
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold text-blue-300">Upload Your Submission</h2>
+        <form
+          onSubmit={handleUpload}
+          className="flex flex-col md:flex-row gap-3 items-center"
+        >
           <input
             type="file"
             onChange={(e) => setUploadFile(e.target.files ? e.target.files[0] : null)}
-            className="mb-2"
+            className="border p-2 rounded-md w-full md:w-auto bg-blue-50"
           />
-          <div className="flex gap-2">
-            <button
-              type="submit"
-              disabled={uploading}
-              className="bg-blue-800 text-white px-3 py-1 rounded hover:bg-blue-700 transition"
-            >
-              {uploading ? "Uploading…" : "Upload"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setUploadFile(null);
-                setMessage("");
-              }}
-              className="px-3 py-1 border rounded hover:bg-gray-100 transition"
-            >
-              Clear
-            </button>
-          </div>
-          {message && <p className="mt-2 text-sm">{message}</p>}
+          <button
+            type="submit"
+            disabled={uploading}
+            className="bg-gradient-to-r from-blue-800 to-blue-600 text-white px-5 py-2 rounded-lg shadow-lg hover:scale-105 hover:shadow-xl transform transition-all duration-300"
+          >
+            {uploading ? "Uploading…" : "Upload"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setUploadFile(null);
+              setMessage("");
+            }}
+            className="px-4 py-2 border rounded-md hover:bg-blue-700 hover:text-white transition"
+          >
+            Clear
+          </button>
         </form>
+        {message && <p className="text-sm mt-1 text-blue-200">{message}</p>}
+        <p>
+          Status:{" "}
+          {alreadySubmitted() ? (
+            <span className="text-green-400 font-semibold">Already submitted ✅</span>
+          ) : (
+            <span className="text-gray-400">Not submitted ❌</span>
+          )}
+        </p>
+      </section>
 
+      {/* Submissions List */}
+      <section className="space-y-4">
+        <h2 className="text-xl font-semibold text-blue-300">Submissions</h2>
         {submissions.length === 0 ? (
-          <p>No submissions yet.</p>
+          <p className="text-gray-400">No submissions yet 😢</p>
         ) : (
-          <ul className="space-y-2">
+          <div className="grid md:grid-cols-2 gap-4">
             {submissions.map((s) => (
-              <li
+              <div
                 key={s.id}
-                className="border p-3 rounded flex justify-between items-center bg-gray-900 text-white"
+                className="bg-white rounded-xl p-4 shadow-lg hover:shadow-2xl transition-shadow border-l-4 border-blue-700"
               >
-                <div>
-                  <div className="font-semibold">{s.employee_email ?? `User ${s.employee_id}`}</div>
-                  <div className="text-sm text-gray-400">
-                    {s.submitted_at ?? ""} | Status:{" "}
-                    <span
-                      className={
-                        s.status === "accepted"
-                          ? "text-green-400 font-bold"
-                          : "text-yellow-400 font-bold"
-                      }
-                    >
-                      {s.status}
-                    </span>
-                  </div>
+                <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-semibold text-gray-800">
+                    {s.employee_email ?? `User ${s.employee_id}`}
+                  </h3>
+                  <span
+                    className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(
+                      s.status
+                    )}`}
+                  >
+                    {s.status.toUpperCase()}
+                  </span>
                 </div>
-                <div className="flex gap-2 items-center">
+                <p className="truncate text-gray-600">{s.file_path}</p>
+                <p className="text-gray-400 text-sm mt-1">
+                  {new Date(s.submitted_at).toLocaleString()}
+                </p>
+                <div className="flex gap-2 mt-2">
                   <a
                     href={downloadUrl(s.file_path)}
-                    className="text-blue-400 underline"
                     target="_blank"
                     rel="noreferrer"
+                    className="text-blue-700 underline hover:text-blue-900 transition"
                   >
-                    Download
+                    📥 Download
                   </a>
-
                   {(currentUser.role === "org_admin" ||
                     currentUser.role === "super_admin" ||
                     currentUser.role === "team_manager") && (
                     <>
                       <button
                         onClick={() => handleAccept(s.id)}
-                        className="bg-green-700 px-2 py-1 rounded hover:bg-green-600 transition"
+                        className="bg-green-700 px-3 py-1 rounded hover:bg-green-600 hover:-translate-y-1 transform transition-all duration-200 shadow"
                       >
                         Accept
                       </button>
                       <button
                         onClick={() => handleDelete(s.id)}
-                        className="bg-red-700 px-2 py-1 rounded hover:bg-red-600 transition"
+                        className="bg-red-700 px-3 py-1 rounded hover:bg-red-600 hover:-translate-y-1 transform transition-all duration-200 shadow"
                       >
                         Delete
                       </button>
                     </>
                   )}
                 </div>
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </section>
     </main>
