@@ -1,8 +1,10 @@
+# backend/main.py
 from flask import Flask
 from flask_cors import CORS
 from app.routes import init_routes
 from app.assignment_routes import init_assignment_routes
 from app.org_routes import init_org_routes
+from app.submission_routes import init_submission_routes
 from app.db_setup import initialize_database
 import os
 
@@ -24,6 +26,7 @@ CORS(
 init_routes(app)
 init_assignment_routes(app)
 init_org_routes(app)
+init_submission_routes(app)
 
 if __name__ == '__main__':
     print("Starting backend on http://0.0.0.0:8000")
