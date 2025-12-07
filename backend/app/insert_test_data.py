@@ -15,7 +15,7 @@ def insert_test_data():
         ("manager@test.com", "password123", "team_manager", 1),
         ("employee1@test.com", "password123", "employee", 1),
         ("employee2@test.com", "password123", "employee", 2),
-        ("employee3@test.com", "password123", "employee", 1)
+        ("employee3@test.com", "password123", "employee", 2)
     ]
 
     user_ids = {}
