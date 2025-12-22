@@ -5,14 +5,14 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "../../context/AuthContext";
+import { useAuth } from "../../../context/AuthContext";
 
 const schema = z.object({
   email: z.string().email(),
   password: z.string().min(6, "Password must be at least 6 characters"),
 });
 
-export default function LoginPage() {
+export default function AdminLoginPage() {
   const { login } = useAuth();
   const router = useRouter();
   const [serverMessage, setServerMessage] = useState("");
@@ -39,14 +39,18 @@ export default function LoginPage() {
         return;
       }
 
-      // EMPLOYEE ONLY
-      if (result.role !== "employee") {
-        setError("This login is for employees only");
+      // BLOCK EMPLOYEES
+      if (result.role === "employee") {
+        setError("Employees must use the employee login page");
         return;
       }
 
       login(result.email, result.role, result.id);
-      router.push("/employee-section");
+
+      if (result.role === "team_manager") router.push("/manager/dashboard");
+      else if (result.role === "org_admin") router.push("/org/dashboard");
+      else if (result.role === "super_admin") router.push("/super/dashboard");
+
     } catch (err) {
       console.error(err);
       setError("Server error. Please try again later.");
@@ -112,3 +116,4 @@ export default function LoginPage() {
     </div>
   );
 }
+
