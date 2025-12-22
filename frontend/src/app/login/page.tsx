@@ -58,7 +58,7 @@ export default function LoginPage() {
       <div className="bg-white p-10 rounded-lg shadow-md w-full max-w-md">
 
         {/* Title */}
-        <h2 className="text-3xl font-bold mb-6 text-center text-blue-700">Login</h2>
+        <h2 className="text-3xl font-bold mb-6 text-center text-blue-700">Employee Login</h2>
 
         {/* Messages */}
         {error && <p className="text-red-500 mb-4 text-center">{error}</p>}
@@ -97,7 +97,6 @@ export default function LoginPage() {
             type="submit"
             className="w-full bg-blue-600 text-white py-3 rounded-md hover:bg-blue-700 transition-colors"
           >
-            Login
           </button>
         </form>
 
