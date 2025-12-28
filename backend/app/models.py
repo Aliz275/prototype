@@ -113,3 +113,14 @@ class MessageReadStatus(Base):
     __tablename__ = 'message_read_status'
     message_id = Column(Integer, ForeignKey('messages.id'), primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), primary_key=True)
+
+class Invitation(Base):
+    __tablename__ = 'invitations'
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, nullable=False)
+    token = Column(String, unique=True, nullable=False)
+    role = Column(String, nullable=False)
+    organization_id = Column(Integer, ForeignKey('organizations.id'), nullable=False)
+    created_by = Column(Integer, ForeignKey('users.id'), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    is_used = Column(Boolean, default=False)

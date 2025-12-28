@@ -1,195 +1,180 @@
 from flask import request, jsonify, session
 from flask_socketio import emit, join_room, leave_room
-from app.auth import role_required
-import sqlite3
-import os
+from sqlalchemy.orm import Session
+from .database import get_db
+from .models import User, Conversation, ConversationParticipant, Message, MessageReadStatus
+from .auth import role_required
 from datetime import datetime
-
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database.db')
 
 def init_messaging_routes(app, socketio):
     @app.route('/api/conversations', methods=['POST'])
     @role_required(['employee', 'manager', 'admin'])
     def create_conversation():
+        db: Session = next(get_db())
         data = request.get_json()
         participant_ids = data.get('participant_ids')
-        user_id = session.get('user_id')
-        role = session.get('role')
+        user = db.query(User).filter(User.email == session.get('email')).first()
 
         if not participant_ids:
             return jsonify({'message': 'Participant IDs are required'}), 400
 
-        participant_ids.append(user_id)
-        # remove duplicates
+        participant_ids.append(user.id)
         participant_ids = list(set(participant_ids))
 
         is_group_chat = len(participant_ids) > 2
         
-        if is_group_chat and role not in ['manager', 'admin']:
+        if is_group_chat and user.role not in ['manager', 'admin']:
             return jsonify({'message': 'Only managers and admins can create group chats'}), 403
             
         name = data.get('name') if is_group_chat else None
 
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("INSERT INTO conversations (name, is_group_chat, created_by_id) VALUES (?, ?, ?)", (name, is_group_chat, user_id))
-        conversation_id = c.lastrowid
-        for participant_id in participant_ids:
-            c.execute("INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)", (conversation_id, participant_id))
-        conn.commit()
-        conn.close()
+        new_conversation = Conversation(name=name, is_group_chat=is_group_chat, created_by_id=user.id)
+        db.add(new_conversation)
+        db.commit()
+        db.refresh(new_conversation)
 
-        return jsonify({'message': 'Conversation created successfully', 'conversation_id': conversation_id}), 201
+        for participant_id in participant_ids:
+            participant = ConversationParticipant(conversation_id=new_conversation.id, user_id=participant_id)
+            db.add(participant)
+        db.commit()
+
+        return jsonify({'message': 'Conversation created successfully', 'conversation_id': new_conversation.id}), 201
 
     @app.route('/api/conversations', methods=['GET'])
     @role_required(['employee', 'manager', 'admin'])
     def get_conversations():
-        user_id = session.get('user_id')
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("""
-            SELECT c.id, c.name, c.is_group_chat
-            FROM conversations c
-            JOIN conversation_participants cp ON c.id = cp.conversation_id
-            WHERE cp.user_id = ?
-        """, (user_id,))
-        conversations = c.fetchall()
-        conn.close()
-        return jsonify(conversations), 200
+        db: Session = next(get_db())
+        user = db.query(User).filter(User.email == session.get('email')).first()
+        conversations = db.query(Conversation).join(ConversationParticipant).filter(ConversationParticipant.user_id == user.id).all()
+        
+        conversation_list = []
+        for conv in conversations:
+            conversation_list.append({
+                'id': conv.id,
+                'name': conv.name,
+                'is_group_chat': conv.is_group_chat
+            })
+        return jsonify(conversation_list), 200
 
     @app.route('/api/conversations/<int:conversation_id>/messages', methods=['GET'])
     @role_required(['employee', 'manager', 'admin'])
     def get_messages(conversation_id):
-        user_id = session.get('user_id')
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT user_id FROM conversation_participants WHERE conversation_id = ? AND user_id = ?", (conversation_id, user_id))
-        participant = c.fetchone()
+        db: Session = next(get_db())
+        user = db.query(User).filter(User.email == session.get('email')).first()
+        participant = db.query(ConversationParticipant).filter(
+            (ConversationParticipant.conversation_id == conversation_id) & (ConversationParticipant.user_id == user.id)
+        ).first()
         if not participant:
             return jsonify({'message': 'Not a participant of this conversation'}), 403
         
-        c.execute("""
-            SELECT m.id, m.content, m.created_at, u.email as sender_email
-            FROM messages m
-            JOIN users u ON m.sender_id = u.id
-            WHERE m.conversation_id = ? AND m.is_deleted = 0
-            ORDER BY m.created_at ASC
-        """, (conversation_id,))
-        messages = c.fetchall()
+        messages = db.query(Message).filter(
+            (Message.conversation_id == conversation_id) & (Message.is_deleted == False)
+        ).order_by(Message.created_at.asc()).all()
         
-        # Update last_read_timestamp
-        c.execute("UPDATE conversation_participants SET last_read_timestamp = ? WHERE conversation_id = ? AND user_id = ?", (datetime.utcnow(), conversation_id, user_id))
-        conn.commit()
+        participant.last_read_timestamp = datetime.utcnow()
+        db.commit()
         
-        conn.close()
-        return jsonify(messages), 200
+        message_list = []
+        for msg in messages:
+            message_list.append({
+                'id': msg.id,
+                'content': msg.content,
+                'created_at': msg.created_at.isoformat(),
+                'sender_email': msg.sender.email
+            })
+        return jsonify(message_list), 200
 
     @app.route('/api/conversations/<int:conversation_id>/messages', methods=['POST'])
     @role_required(['employee', 'manager', 'admin'])
     def send_message(conversation_id):
+        db: Session = next(get_db())
         data = request.get_json()
         content = data.get('content')
-        user_id = session.get('user_id')
+        user = db.query(User).filter(User.email == session.get('email')).first()
 
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT user_id FROM conversation_participants WHERE conversation_id = ? AND user_id = ?", (conversation_id, user_id))
-        participant = c.fetchone()
+        participant = db.query(ConversationParticipant).filter(
+            (ConversationParticipant.conversation_id == conversation_id) & (ConversationParticipant.user_id == user.id)
+        ).first()
         if not participant:
             return jsonify({'message': 'Not a participant of this conversation'}), 403
 
-        c.execute("INSERT INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)", (conversation_id, user_id, content))
-        message_id = c.lastrowid
-        conn.commit()
-        c.execute("SELECT created_at FROM messages WHERE id = ?", (message_id,))
-        created_at = c.fetchone()[0]
-        conn.close()
+        new_message = Message(conversation_id=conversation_id, sender_id=user.id, content=content)
+        db.add(new_message)
+        db.commit()
+        db.refresh(new_message)
         
-        c.execute("SELECT u.email FROM users u WHERE u.id = ?", (user_id,))
-        sender_email = c.fetchone()[0]
-
-
-        socketio.emit('new_message', {'conversation_id': conversation_id, 'message': {'id': message_id, 'content': content, 'sender_email': sender_email, 'created_at': created_at}}, room=f'conversation_{conversation_id}')
+        socketio.emit('new_message', {
+            'conversation_id': conversation_id, 
+            'message': {
+                'id': new_message.id, 
+                'content': new_message.content, 
+                'sender_email': user.email, 
+                'created_at': new_message.created_at.isoformat()
+            }
+        }, room=f'conversation_{conversation_id}')
         return jsonify({'message': 'Message sent successfully'}), 201
 
     @app.route('/api/messages/<int:message_id>', methods=['DELETE'])
     @role_required(['employee', 'manager', 'admin'])
     def delete_message(message_id):
-        user_id = session.get('user_id')
-        role = session.get('role')
-
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT sender_id, conversation_id FROM messages WHERE id = ?", (message_id,))
-        message = c.fetchone()
+        db: Session = next(get_db())
+        user = db.query(User).filter(User.email == session.get('email')).first()
+        message = db.query(Message).filter(Message.id == message_id).first()
         if not message:
-            conn.close()
             return jsonify({'message': 'Message not found'}), 404
 
-        sender_id, conversation_id = message
+        conversation = db.query(Conversation).filter(Conversation.id == message.conversation_id).first()
         
-        c.execute("SELECT is_group_chat FROM conversations WHERE id = ?", (conversation_id,))
-        conversation = c.fetchone()
-        is_group_chat = conversation[0]
-
-        if user_id == sender_id or (role in ['manager', 'admin'] and is_group_chat):
-            c.execute("UPDATE messages SET is_deleted = 1 WHERE id = ?", (message_id,))
-            conn.commit()
-            conn.close()
-            socketio.emit('message_deleted', {'message_id': message_id, 'conversation_id': conversation_id}, room=f'conversation_{conversation_id}')
+        if user.id == message.sender_id or (user.role in ['manager', 'admin'] and conversation.is_group_chat):
+            message.is_deleted = True
+            db.commit()
+            socketio.emit('message_deleted', {'message_id': message_id, 'conversation_id': message.conversation_id}, room=f'conversation_{message.conversation_id}')
             return jsonify({'message': 'Message deleted successfully'}), 200
         else:
-            conn.close()
             return jsonify({'message': 'Unauthorized to delete this message'}), 403
 
     @app.route('/api/messages/<int:message_id>', methods=['PUT'])
     @role_required(['employee', 'manager', 'admin'])
     def edit_message(message_id):
+        db: Session = next(get_db())
         data = request.get_json()
         content = data.get('content')
-        user_id = session.get('user_id')
-
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT sender_id, conversation_id FROM messages WHERE id = ?", (message_id,))
-        message = c.fetchone()
+        user = db.query(User).filter(User.email == session.get('email')).first()
+        message = db.query(Message).filter(Message.id == message_id).first()
         if not message:
-            conn.close()
             return jsonify({'message': 'Message not found'}), 404
         
-        sender_id, conversation_id = message
-
-        if user_id != sender_id:
-            conn.close()
+        if user.id != message.sender_id:
             return jsonify({'message': 'You can only edit your own messages'}), 403
 
-        c.execute("UPDATE messages SET content = ?, updated_at = ? WHERE id = ?", (content, datetime.utcnow(), message_id))
-        conn.commit()
-        conn.close()
-        socketio.emit('message_edited', {'message_id': message_id, 'conversation_id': conversation_id, 'content': content}, room=f'conversation_{conversation_id}')
+        message.content = content
+        message.updated_at = datetime.utcnow()
+        db.commit()
+        socketio.emit('message_edited', {'message_id': message_id, 'conversation_id': message.conversation_id, 'content': content}, room=f'conversation_{message.conversation_id}')
         return jsonify({'message': 'Message edited successfully'}), 200
 
     @app.route('/api/conversations/<int:conversation_id>/participants', methods=['POST'])
     @role_required(['manager', 'admin'])
     def add_participant(conversation_id):
+        db: Session = next(get_db())
         data = request.get_json()
         user_id = data.get('user_id')
-
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)", (conversation_id, user_id))
-        conn.commit()
-        conn.close()
+        
+        participant = ConversationParticipant(conversation_id=conversation_id, user_id=user_id)
+        db.add(participant)
+        db.commit()
         return jsonify({'message': 'Participant added successfully'}), 201
 
     @app.route('/api/conversations/<int:conversation_id>/participants/<int:user_id>', methods=['DELETE'])
     @role_required(['manager', 'admin'])
     def remove_participant(conversation_id, user_id):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("DELETE FROM conversation_participants WHERE conversation_id = ? AND user_id = ?", (conversation_id, user_id))
-        conn.commit()
-        conn.close()
+        db: Session = next(get_db())
+        participant = db.query(ConversationParticipant).filter(
+            (ConversationParticipant.conversation_id == conversation_id) & (ConversationParticipant.user_id == user_id)
+        ).first()
+        if participant:
+            db.delete(participant)
+            db.commit()
         return jsonify({'message': 'Participant removed successfully'}), 200
     
     @socketio.on('join')
@@ -204,55 +189,49 @@ def init_messaging_routes(app, socketio):
 
     @socketio.on('connect')
     def on_connect():
-        user_id = session.get('user_id')
-        if user_id:
-            # Broadcast to other users that this user is online
-            emit('user_status', {'user_id': user_id, 'status': 'online'}, broadcast=True)
+        user = db.query(User).filter(User.email == session.get('email')).first()
+        if user:
+            emit('user_status', {'user_id': user.id, 'status': 'online'}, broadcast=True)
 
     @socketio.on('disconnect')
     def on_disconnect():
-        user_id = session.get('user_id')
-        if user_id:
-            # Broadcast to other users that this user is offline
-            emit('user_status', {'user_id': user_id, 'status': 'offline'}, broadcast=True)
+        user = db.query(User).filter(User.email == session.get('email')).first()
+        if user:
+            emit('user_status', {'user_id': user.id, 'status': 'offline'}, broadcast=True)
 
     @socketio.on('read_message')
     def on_read_message(data):
-        user_id = session.get('user_id')
+        db: Session = next(get_db())
+        user = db.query(User).filter(User.email == session.get('email')).first()
         message_id = data.get('message_id')
         conversation_id = data.get('conversation_id')
-        if user_id and message_id:
-            conn = sqlite3.connect(DB_PATH)
-            c = conn.cursor()
+        if user and message_id:
+            read_status = MessageReadStatus(message_id=message_id, user_id=user.id)
+            db.add(read_status)
             try:
-                c.execute("INSERT INTO message_read_status (message_id, user_id) VALUES (?, ?)", (message_id, user_id))
-                conn.commit()
-                # Notify others in the conversation that the message has been read
-                emit('message_read', {'user_id': user_id, 'message_id': message_id}, room=f'conversation_{conversation_id}')
-            except sqlite3.IntegrityError:
-                # The user has already read this message
-                pass
-            finally:
-                conn.close()
+                db.commit()
+                emit('message_read', {'user_id': user.id, 'message_id': message_id}, room=f'conversation_{conversation_id}')
+            except:
+                db.rollback()
     
     @app.route('/api/search/messages', methods=['GET'])
     @role_required(['employee', 'manager', 'admin'])
     def search_messages():
+        db: Session = next(get_db())
         query = request.args.get('q')
-        user_id = session.get('user_id')
+        user = db.query(User).filter(User.email == session.get('email')).first()
 
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("""
-            SELECT m.id, m.content, m.created_at, u.email as sender_email, c.id as conversation_id
-            FROM messages m
-            JOIN users u ON m.sender_id = u.id
-            JOIN conversations c ON m.conversation_id = c.id
-            JOIN conversation_participants cp ON c.id = cp.conversation_id
-            WHERE cp.user_id = ? AND m.content LIKE ? AND m.is_deleted = 0
-            ORDER BY m.created_at DESC
-        """, (user_id, f'%{query}%'))
-        messages = c.fetchall()
-        conn.close()
+        messages = db.query(Message).join(ConversationParticipant).filter(
+            (ConversationParticipant.user_id == user.id) & (Message.content.ilike(f'%{query}%')) & (Message.is_deleted == False)
+        ).order_by(Message.created_at.desc()).all()
 
-        return jsonify(messages)
+        message_list = []
+        for msg in messages:
+            message_list.append({
+                'id': msg.id,
+                'content': msg.content,
+                'created_at': msg.created_at.isoformat(),
+                'sender_email': msg.sender.email,
+                'conversation_id': msg.conversation_id
+            })
+        return jsonify(message_list)

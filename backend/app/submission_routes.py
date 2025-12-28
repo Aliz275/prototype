@@ -1,14 +1,13 @@
-import sqlite3
 import os
 from flask import request, jsonify, session, send_from_directory
 from werkzeug.utils import secure_filename
+from sqlalchemy.orm import Session
+from .database import get_db
+from .models import User, Submission, Assignment, Team
+from .auth import role_required
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database.db')
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '..', 'uploads')
 ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'docx', 'txt'}
-
-def _connect():
-    return sqlite3.connect(DB_PATH)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -17,182 +16,101 @@ def init_submission_routes(app):
     if not os.path.exists(UPLOAD_FOLDER):
         os.makedirs(UPLOAD_FOLDER)
 
-    # ---------------- POST upload submission ----------------
     @app.route('/api/submissions/<int:assignment_id>', methods=['POST'])
     def submit_assignment(assignment_id):
-        if 'email' not in session:
-            return jsonify({'message': 'Unauthorized'}), 401
-
-        conn = _connect()
-        c = conn.cursor()
-
-        # get user id
-        c.execute('SELECT id FROM users WHERE email = ?', (session.get('email'),))
-        row = c.fetchone()
-        if not row:
-            conn.close()
+        db: Session = next(get_db())
+        user = db.query(User).filter(User.email == session.get('email')).first()
+        if not user:
             return jsonify({'message': 'User not found'}), 404
-        user_id = row[0]
 
         if 'file' not in request.files:
-            conn.close()
             return jsonify({'message': 'No file uploaded'}), 400
 
         file = request.files['file']
         if file.filename == '':
-            conn.close()
             return jsonify({'message': 'No file selected'}), 400
 
         if not allowed_file(file.filename):
-            conn.close()
             return jsonify({'message': 'File type not allowed'}), 400
 
-        safe_filename = secure_filename(f"user{user_id}_assign{assignment_id}_{file.filename}")
+        safe_filename = secure_filename(f"user{user.id}_assign{assignment_id}_{file.filename}")
         dest_path = os.path.join(UPLOAD_FOLDER, safe_filename)
 
         try:
             file.save(dest_path)
         except Exception as e:
-            conn.close()
             return jsonify({'message': f'Failed to save file: {e}'}), 500
 
-        try:
-            # Insert submission with status "pending"
-            c.execute(
-                'INSERT INTO submissions (assignment_id, employee_id, file_path, status) VALUES (?, ?, ?, ?)',
-                (assignment_id, user_id, safe_filename, 'pending')
-            )
-            conn.commit()
-            submission_id = c.lastrowid
-        except Exception as e:
-            conn.rollback()
-            conn.close()
-            return jsonify({'message': f'DB error: {e}'}), 500
+        new_submission = Submission(
+            assignment_id=assignment_id,
+            employee_id=user.id,
+            file_path=safe_filename,
+            status='pending'
+        )
+        db.add(new_submission)
+        db.commit()
+        db.refresh(new_submission)
 
-        conn.close()
-        return jsonify({'message': 'Submission uploaded successfully', 'submission_id': submission_id, 'file': safe_filename}), 201
+        return jsonify({'message': 'Submission uploaded successfully', 'submission_id': new_submission.id, 'file': safe_filename}), 201
 
-    # ---------------- GET submissions for an assignment ----------------
     @app.route('/api/submissions/<int:assignment_id>', methods=['GET'])
     def list_submissions(assignment_id):
-        if 'email' not in session:
-            return jsonify({'message': 'Unauthorized'}), 401
-
-        conn = _connect()
-        c = conn.cursor()
-
-        c.execute('SELECT id, role FROM users WHERE email = ?', (session.get('email'),))
-        u = c.fetchone()
-        if not u:
-            conn.close()
+        db: Session = next(get_db())
+        user = db.query(User).filter(User.email == session.get('email')).first()
+        if not user:
             return jsonify({'message': 'User not found'}), 404
-        user_id, role = u[0], u[1]
 
-        if role in ('org_admin', 'super_admin'):
-            c.execute('''
-                SELECT s.id, s.assignment_id, s.employee_id, s.file_path, s.submitted_at, s.status, u.email
-                FROM submissions s
-                LEFT JOIN users u ON s.employee_id = u.id
-                WHERE s.assignment_id = ?
-                ORDER BY s.submitted_at DESC
-            ''', (assignment_id,))
-        elif role == 'team_manager':
-            c.execute('''
-                SELECT s.id, s.assignment_id, s.employee_id, s.file_path, s.submitted_at, s.status, u.email
-                FROM submissions s
-                LEFT JOIN users u ON s.employee_id = u.id
-                LEFT JOIN assignments a ON s.assignment_id = a.id
-                LEFT JOIN teams t ON a.team_id = t.id
-                WHERE s.assignment_id = ? AND (t.manager_id = ? OR a.is_general = 1)
-                ORDER BY s.submitted_at DESC
-            ''', (assignment_id, user_id))
+        if user.role in ('org_admin', 'super_admin'):
+            submissions = db.query(Submission).filter(Submission.assignment_id == assignment_id).all()
+        elif user.role == 'team_manager':
+            submissions = db.query(Submission).join(Assignment).join(Team).filter(
+                (Submission.assignment_id == assignment_id) & ((Team.manager_id == user.id) | (Assignment.is_general == True))
+            ).all()
         else:
-            c.execute('''
-                SELECT s.id, s.assignment_id, s.employee_id, s.file_path, s.submitted_at, s.status, u.email
-                FROM submissions s
-                LEFT JOIN users u ON s.employee_id = u.id
-                WHERE s.assignment_id = ? AND s.employee_id = ?
-                ORDER BY s.submitted_at DESC
-            ''', (assignment_id, user_id))
+            submissions = db.query(Submission).filter(
+                (Submission.assignment_id == assignment_id) & (Submission.employee_id == user.id)
+            ).all()
 
-        rows = c.fetchall()
-        submissions = []
-        for r in rows:
-            submissions.append({
-                'id': r[0],
-                'assignment_id': r[1],
-                'employee_id': r[2],
-                'file_path': r[3],
-                'submitted_at': r[4],
-                'status': r[5] or 'pending',
-                'employee_email': r[6]
+        submissions_list = []
+        for s in submissions:
+            submissions_list.append({
+                'id': s.id,
+                'assignment_id': s.assignment_id,
+                'employee_id': s.employee_id,
+                'file_path': s.file_path,
+                'submitted_at': s.submitted_at.isoformat(),
+                'status': s.status,
+                'employee_email': s.employee.email
             })
 
-        conn.close()
-        return jsonify({'submissions': submissions}), 200
+        return jsonify({'submissions': submissions_list}), 200
 
-    # ---------------- POST accept submission ----------------
     @app.route('/api/submissions/<int:submission_id>/accept', methods=['POST'])
+    @role_required(['org_admin', 'super_admin', 'team_manager'])
     def accept_submission(submission_id):
-        if 'email' not in session:
-            return jsonify({'message': 'Unauthorized'}), 401
+        db: Session = next(get_db())
+        submission = db.query(Submission).filter(Submission.id == submission_id).first()
+        if not submission:
+            return jsonify({'message': 'Submission not found'}), 404
 
-        conn = _connect()
-        c = conn.cursor()
-        c.execute('SELECT id, role FROM users WHERE email = ?', (session.get('email'),))
-        u = c.fetchone()
-        if not u:
-            conn.close()
-            return jsonify({'message': 'User not found'}), 404
-        user_id, role = u[0], u[1]
+        submission.status = 'accepted'
+        db.commit()
 
-        if role not in ('org_admin', 'super_admin', 'team_manager'):
-            conn.close()
-            return jsonify({'message': 'Forbidden'}), 403
-
-        try:
-            c.execute('UPDATE submissions SET status = "accepted" WHERE id = ?', (submission_id,))
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            conn.close()
-            return jsonify({'message': f'DB error: {e}'}), 500
-
-        conn.close()
         return jsonify({'message': 'Submission accepted'}), 200
 
-    # ---------------- DELETE submission ----------------
     @app.route('/api/submissions/delete/<int:submission_id>', methods=['DELETE'])
+    @role_required(['org_admin', 'super_admin', 'team_manager'])
     def delete_submission(submission_id):
-        if 'email' not in session:
-            return jsonify({'message': 'Unauthorized'}), 401
+        db: Session = next(get_db())
+        submission = db.query(Submission).filter(Submission.id == submission_id).first()
+        if not submission:
+            return jsonify({'message': 'Submission not found'}), 404
 
-        conn = _connect()
-        c = conn.cursor()
-        c.execute('SELECT id, role FROM users WHERE email = ?', (session.get('email'),))
-        u = c.fetchone()
-        if not u:
-            conn.close()
-            return jsonify({'message': 'User not found'}), 404
-        user_id, role = u[0], u[1]
+        file_path = os.path.join(UPLOAD_FOLDER, submission.file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
-        if role not in ('org_admin', 'super_admin', 'team_manager'):
-            conn.close()
-            return jsonify({'message': 'Forbidden'}), 403
+        db.delete(submission)
+        db.commit()
 
-        try:
-            c.execute('SELECT file_path FROM submissions WHERE id = ?', (submission_id,))
-            row = c.fetchone()
-            if row:
-                file_path = os.path.join(UPLOAD_FOLDER, row[0])
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-            c.execute('DELETE FROM submissions WHERE id = ?', (submission_id,))
-            conn.commit()
-        except Exception as e:
-            conn.rollback()
-            conn.close()
-            return jsonify({'message': f'DB error: {e}'}), 500
-
-        conn.close()
         return jsonify({'message': 'Submission deleted'}), 200
