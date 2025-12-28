@@ -10,6 +10,36 @@ def init_assignment_routes(app):
     @app.route('/api/assignments', methods=['POST'])
     @role_required(['org_admin', 'team_manager'])
     def create_assignment():
+        """
+        Create a new assignment
+        ---
+        parameters:
+          - in: body
+            name: body
+            schema:
+              id: Assignment
+              required:
+                - title
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                due_date:
+                  type: string
+                  format: date-time
+                employee_ids:
+                  type: array
+                  items:
+                    type: integer
+                team_id:
+                  type: integer
+        responses:
+          201:
+            description: Assignment created successfully
+          400:
+            description: Bad request
+        """
         db: Session = next(get_db())
         data = request.get_json() or {}
         title = data.get('title')
@@ -62,6 +92,17 @@ def init_assignment_routes(app):
     # ---------------- GET ALL ASSIGNMENTS ----------------
     @app.route('/api/assignments', methods=['GET'])
     def get_assignments():
+        """
+        Get all assignments
+        ---
+        responses:
+          200:
+            description: A list of assignments
+            schema:
+              type: array
+              items:
+                $ref: '#/definitions/Assignment'
+        """
         db: Session = next(get_db())
         user_id = request.current_user['sub']
         user = db.query(User).filter(User.id == user_id).first()

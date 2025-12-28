@@ -1,6 +1,7 @@
 from flask import Flask
 from flask_cors import CORS
 from flask_socketio import SocketIO
+from flasgger import Swagger
 import eventlet
 import os
 
@@ -18,6 +19,9 @@ initialize_database()
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a_default_secret_key')
 CORS(app, supports_credentials=True)
+
+# Initialize Swagger
+swagger = Swagger(app)
 
 # Initialize SocketIO
 socketio = SocketIO(app, cors_allowed_origins="*")
