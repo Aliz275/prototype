@@ -1,17 +1,16 @@
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
 
-import sqlite3
-from flask import g
-import os
+DATABASE_URL = "postgresql://user:password@localhost/dbname"
 
-DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database.db')
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
 def get_db():
-    if 'db' not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
-    return g.db
-
-def close_db(e=None):
-    db = g.pop('db', None)
-    if db is not None:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
         db.close()
