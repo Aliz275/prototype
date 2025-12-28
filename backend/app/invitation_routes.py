@@ -1,6 +1,6 @@
 import secrets
 from datetime import datetime, timedelta
-from flask import request, jsonify, session
+from flask import request, jsonify
 from sqlalchemy.orm import Session
 from .database import get_db
 from .models import Invitation, User
@@ -22,7 +22,8 @@ def init_invitation_routes(app):
         token = secrets.token_urlsafe(16)
         expires_at = datetime.now() + timedelta(days=7)
         
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return jsonify({'message': 'User not found'}), 404
 

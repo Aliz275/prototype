@@ -1,5 +1,5 @@
 import os
-from flask import request, jsonify, session, send_from_directory
+from flask import request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from sqlalchemy.orm import Session
 from .database import get_db
@@ -19,7 +19,8 @@ def init_submission_routes(app):
     @app.route('/api/submissions/<int:assignment_id>', methods=['POST'])
     def submit_assignment(assignment_id):
         db: Session = next(get_db())
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return jsonify({'message': 'User not found'}), 404
 
@@ -56,7 +57,8 @@ def init_submission_routes(app):
     @app.route('/api/submissions/<int:assignment_id>', methods=['GET'])
     def list_submissions(assignment_id):
         db: Session = next(get_db())
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return jsonify({'message': 'User not found'}), 404
 

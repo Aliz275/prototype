@@ -1,4 +1,4 @@
-from flask import request, jsonify, session
+from flask import request, jsonify
 from flask_socketio import emit, join_room, leave_room
 from sqlalchemy.orm import Session
 from .database import get_db
@@ -13,7 +13,8 @@ def init_messaging_routes(app, socketio):
         db: Session = next(get_db())
         data = request.get_json()
         participant_ids = data.get('participant_ids')
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
 
         if not participant_ids:
             return jsonify({'message': 'Participant IDs are required'}), 400
@@ -44,7 +45,8 @@ def init_messaging_routes(app, socketio):
     @role_required(['employee', 'manager', 'admin'])
     def get_conversations():
         db: Session = next(get_db())
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         conversations = db.query(Conversation).join(ConversationParticipant).filter(ConversationParticipant.user_id == user.id).all()
         
         conversation_list = []
@@ -60,7 +62,8 @@ def init_messaging_routes(app, socketio):
     @role_required(['employee', 'manager', 'admin'])
     def get_messages(conversation_id):
         db: Session = next(get_db())
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         participant = db.query(ConversationParticipant).filter(
             (ConversationParticipant.conversation_id == conversation_id) & (ConversationParticipant.user_id == user.id)
         ).first()
@@ -90,7 +93,8 @@ def init_messaging_routes(app, socketio):
         db: Session = next(get_db())
         data = request.get_json()
         content = data.get('content')
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
 
         participant = db.query(ConversationParticipant).filter(
             (ConversationParticipant.conversation_id == conversation_id) & (ConversationParticipant.user_id == user.id)
@@ -118,7 +122,8 @@ def init_messaging_routes(app, socketio):
     @role_required(['employee', 'manager', 'admin'])
     def delete_message(message_id):
         db: Session = next(get_db())
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         message = db.query(Message).filter(Message.id == message_id).first()
         if not message:
             return jsonify({'message': 'Message not found'}), 404
@@ -139,7 +144,8 @@ def init_messaging_routes(app, socketio):
         db: Session = next(get_db())
         data = request.get_json()
         content = data.get('content')
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         message = db.query(Message).filter(Message.id == message_id).first()
         if not message:
             return jsonify({'message': 'Message not found'}), 404
@@ -189,20 +195,23 @@ def init_messaging_routes(app, socketio):
 
     @socketio.on('connect')
     def on_connect():
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         if user:
             emit('user_status', {'user_id': user.id, 'status': 'online'}, broadcast=True)
 
     @socketio.on('disconnect')
     def on_disconnect():
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         if user:
             emit('user_status', {'user_id': user.id, 'status': 'offline'}, broadcast=True)
 
     @socketio.on('read_message')
     def on_read_message(data):
         db: Session = next(get_db())
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         message_id = data.get('message_id')
         conversation_id = data.get('conversation_id')
         if user and message_id:
@@ -219,7 +228,8 @@ def init_messaging_routes(app, socketio):
     def search_messages():
         db: Session = next(get_db())
         query = request.args.get('q')
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
 
         messages = db.query(Message).join(ConversationParticipant).filter(
             (ConversationParticipant.user_id == user.id) & (Message.content.ilike(f'%{query}%')) & (Message.is_deleted == False)

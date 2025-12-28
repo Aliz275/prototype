@@ -1,4 +1,4 @@
-from flask import request, jsonify, session
+from flask import request, jsonify
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from .database import get_db
@@ -38,7 +38,8 @@ def init_org_routes(app):
         if not name or not organization_id:
             return jsonify({'message': 'Team name and organization ID are required'}), 400
         
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         if user.organization_id != organization_id:
             return jsonify({'message': 'Unauthorized: You can only create teams for your own organization'}), 403
 
@@ -63,7 +64,8 @@ def init_org_routes(app):
         if not team:
             return jsonify({'message': 'Team not found'}), 404
 
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         if user.role == 'team_manager' and team.manager_id != user.id:
             return jsonify({'message': 'Unauthorized: You are not the manager of this team'}), 403
 

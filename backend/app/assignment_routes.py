@@ -1,4 +1,4 @@
-from flask import request, jsonify, session
+from flask import request, jsonify
 from sqlalchemy.orm import Session
 from .auth import role_required
 from datetime import datetime
@@ -27,7 +27,8 @@ def init_assignment_routes(app):
             except ValueError:
                 return jsonify({'message': 'Invalid due date format. Use ISO 8601 format.'}), 400
 
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return jsonify({'message': 'User not found'}), 404
 
@@ -62,7 +63,8 @@ def init_assignment_routes(app):
     @app.route('/api/assignments', methods=['GET'])
     def get_assignments():
         db: Session = next(get_db())
-        user = db.query(User).filter(User.email == session.get('email')).first()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return jsonify({'message': 'User not found'}), 404
 
