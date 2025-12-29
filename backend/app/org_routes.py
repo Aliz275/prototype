@@ -1,70 +1,79 @@
-import sqlite3
-from flask import request, jsonify, session
+from flask import request, jsonify
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from .database import get_db
+from .models import Organization, Team, User, TeamMember
+from .auth import role_required
 
 def init_org_routes(app):
-
     @app.route('/api/organizations', methods=['POST'])
+    @role_required(['super_admin'])
     def create_organization():
-        # In a real-world scenario, you'd want to protect this route,
-        # possibly making it accessible only to a Super Admin.
+        db: Session = next(get_db())
         data = request.get_json()
         name = data.get('name')
 
         if not name:
             return jsonify({'message': 'Organization name is required'}), 400
 
+        new_org = Organization(name=name)
+        db.add(new_org)
         try:
-            conn = sqlite3.connect('database.db')
-            c = conn.cursor()
-            c.execute('INSERT INTO organizations (name) VALUES (?)', (name,))
-            org_id = c.lastrowid
-            conn.commit()
-            conn.close()
-            return jsonify({'message': 'Organization created successfully!', 'organization_id': org_id}), 201
-        except sqlite3.IntegrityError:
+            db.commit()
+            db.refresh(new_org)
+            return jsonify({'message': 'Organization created successfully!', 'organization_id': new_org.id}), 201
+        except IntegrityError:
+            db.rollback()
             return jsonify({'message': 'Organization name already exists'}), 400
 
     @app.route('/api/teams', methods=['POST'])
+    @role_required(['org_admin'])
     def create_team():
-        if not session.get('is_admin'): # For now, we'll assume Org Admins are the ones creating teams
-            return jsonify({'message': 'Unauthorized: Admins only'}), 403
-
+        db: Session = next(get_db())
         data = request.get_json()
         name = data.get('name')
         organization_id = data.get('organization_id')
+        manager_id = data.get('manager_id')
 
         if not name or not organization_id:
             return jsonify({'message': 'Team name and organization ID are required'}), 400
-
-        conn = sqlite3.connect('database.db')
-        c = conn.cursor()
-        c.execute('INSERT INTO teams (name, organization_id) VALUES (?, ?)', (name, organization_id))
-        team_id = c.lastrowid
-        conn.commit()
-        conn.close()
         
-        return jsonify({'message': 'Team created successfully!', 'team_id': team_id}), 201
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
+        if user.organization_id != organization_id:
+            return jsonify({'message': 'Unauthorized: You can only create teams for your own organization'}), 403
+
+        new_team = Team(name=name, organization_id=organization_id, manager_id=manager_id)
+        db.add(new_team)
+        db.commit()
+        db.refresh(new_team)
+        
+        return jsonify({'message': 'Team created successfully!', 'team_id': new_team.id}), 201
 
     @app.route('/api/teams/<int:team_id>/members', methods=['POST'])
+    @role_required(['org_admin', 'team_manager'])
     def add_team_member(team_id):
-        if not session.get('is_admin'):
-            return jsonify({'message': 'Unauthorized: Admins only'}), 403
-
+        db: Session = next(get_db())
         data = request.get_json()
         user_id = data.get('user_id')
 
         if not user_id:
             return jsonify({'message': 'User ID is required'}), 400
+        
+        team = db.query(Team).filter(Team.id == team_id).first()
+        if not team:
+            return jsonify({'message': 'Team not found'}), 404
 
-        conn = sqlite3.connect('database.db')
-        c = conn.cursor()
+        user_id = request.current_user['sub']
+        user = db.query(User).filter(User.id == user_id).first()
+        if user.role == 'team_manager' and team.manager_id != user.id:
+            return jsonify({'message': 'Unauthorized: You are not the manager of this team'}), 403
+
+        new_member = TeamMember(user_id=user_id, team_id=team_id)
+        db.add(new_member)
         try:
-            c.execute('INSERT INTO team_members (user_id, team_id) VALUES (?, ?)', (user_id, team_id))
-            conn.commit()
-        except sqlite3.IntegrityError:
-            conn.close()
+            db.commit()
+            return jsonify({'message': 'User added to team successfully!'}), 201
+        except IntegrityError:
+            db.rollback()
             return jsonify({'message': 'User is already in this team'}), 400
-        finally:
-            conn.close()
-
-        return jsonify({'message': 'User added to team successfully!'}), 201
