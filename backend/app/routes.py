@@ -2,32 +2,50 @@
 import sqlite3
 import bcrypt
 from flask import request, jsonify, session
+from datetime import datetime
 
 def init_routes(app):
     @app.route('/api/signup', methods=['POST'])
     def signup():
         data = request.get_json()
-        email = data.get('email')
         password = data.get('password')
-        organization_id = data.get('organization_id')  # Users must join an organization
+        token = data.get('token')
 
-        if not all([email, password, organization_id]):
-            return jsonify({'message': 'Email, password, and organization ID are required'}), 400
+        if not all([password, token]):
+            return jsonify({'message': 'Password and token are required'}), 400
+
+        conn = sqlite3.connect('database.db')
+        c = conn.cursor()
+        c.execute('SELECT email, role, organization_id, expires_at, is_used FROM invitations WHERE token = ?', (token,))
+        invitation = c.fetchone()
+
+        if not invitation:
+            conn.close()
+            return jsonify({'message': 'Invalid token'}), 404
+
+        email, role, organization_id, expires_at, is_used = invitation
+        
+        if datetime.strptime(expires_at, '%Y-%m-%d %H:%M:%S.%f') < datetime.now():
+            conn.close()
+            return jsonify({'message': 'Token has expired'}), 400
+        
+        if is_used:
+            conn.close()
+            return jsonify({'message': 'Token has already been used'}), 400
 
         hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
         try:
-            conn = sqlite3.connect('database.db')
-            c = conn.cursor()
-            # By default, new users are 'employees'. Admins can change this later.
             c.execute(
                 'INSERT INTO users (email, password, organization_id, role) VALUES (?, ?, ?, ?)',
-                (email, hashed_password, organization_id, 'employee')
+                (email, hashed_password, organization_id, role)
             )
+            c.execute('UPDATE invitations SET is_used = 1 WHERE token = ?', (token,))
             conn.commit()
             conn.close()
             return jsonify({'message': 'Signup successful!'}), 201
         except sqlite3.IntegrityError:
+            conn.close()
             return jsonify({'message': 'Email already exists'}), 400
 
     @app.route('/api/login', methods=['POST'])

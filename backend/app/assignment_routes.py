@@ -18,7 +18,7 @@ def init_assignment_routes(app):
 
     # ---------------- CREATE ASSIGNMENT ----------------
     @app.route('/api/assignments', methods=['POST'])
-    @role_required(['org_admin', 'team_manager'])
+    @role_required(['super_admin', 'org_admin', 'team_manager'])
     def create_assignment():
         data = request.get_json() or {}
         title = data.get('title')

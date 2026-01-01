@@ -5,15 +5,18 @@ import eventlet
 import os
 
 from app.db_setup import initialize_database
+from app.db_migrations import apply_migrations
 from app.routes import init_routes
 from app.org_routes import init_org_routes
 from app.assignment_routes import init_assignment_routes
 from app.messaging_routes import init_messaging_routes
 from app.user_routes import init_user_routes
 from app.submission_routes import init_submission_routes
+from app.invitation_routes import init_invitation_routes
 
 # Initialize the database first
 initialize_database()
+apply_migrations()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a_default_secret_key')
@@ -29,6 +32,7 @@ init_assignment_routes(app)
 init_messaging_routes(app, socketio)
 init_user_routes(app)
 init_submission_routes(app)
+init_invitation_routes(app)
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)
