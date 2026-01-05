@@ -32,6 +32,13 @@ export default function Navbar() {
           </Link>
         )}
 
+        {/* 🔹 Show Invitations link only for super_admin */}
+        {user?.role === 'super_admin' && (
+          <Link href="/admin/invitations" className="ml-2 px-2 py-1 rounded hover:bg-gray-700">
+            Invitations
+          </Link>
+        )}
+
         {!user ? (
           <Link href="/login">Login</Link>
         ) : (
