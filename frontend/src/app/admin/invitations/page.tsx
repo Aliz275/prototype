@@ -85,17 +85,25 @@ export default function AdminInvitationsPage() {
 
   async function deleteInvitation(id: number) {
     if (!confirm("Delete this invitation?")) return;
-
+  
     try {
-      await fetch(`http://localhost:8000/api/invitations/${id}`, {
+      const res = await fetch(`http://localhost:8000/api/invitations/${id}`, {
         method: "DELETE",
         credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
       });
+  
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to delete invitation");
+  
       fetchInvitations();
-    } catch {
-      setError("Failed to delete invitation");
+    } catch (err: any) {
+      setError(err.message || "Failed to delete invitation");
     }
   }
+  
 
   if (!user) return <p className="p-6">Loading...</p>;
 
