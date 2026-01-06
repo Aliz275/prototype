@@ -19,14 +19,16 @@ def get_db_connection():
 def init_invitation_routes(app):
 
     # -------------------------
-    # CORS PREFLIGHT (UNPROTECTED)
+    # CORS PREFLIGHT (OPTIONS)
     # -------------------------
     @app.route('/api/invitations', methods=['OPTIONS'])
-    def invitations_options():
+    @app.route('/api/invitations/<int:invitation_id>', methods=['OPTIONS'])
+    def invitations_options(invitation_id=None):
         return jsonify({}), 200
-    
 
+    # -------------------------
     # CREATE INVITATION
+    # -------------------------
     @app.route('/api/invitations', methods=['POST'])
     @role_required(['super_admin'])
     def create_invitation():
@@ -60,7 +62,9 @@ def init_invitation_routes(app):
             "invite_link": invite_link
         }), 201
 
+    # -------------------------
     # GET ALL INVITATIONS
+    # -------------------------
     @app.route('/api/invitations', methods=['GET'])
     @role_required(['super_admin'])
     def get_invitations():
@@ -71,28 +75,32 @@ def init_invitation_routes(app):
         conn.close()
         return jsonify({'invitations': invitations}), 200
 
+    # -------------------------
     # DELETE INVITATION
-    @app.route('/api/invitations/<int:invitation_id>', methods=['DELETE', 'OPTIONS'])
+    # -------------------------
+    @app.route('/api/invitations/<int:invitation_id>', methods=['DELETE'])
     @role_required(['super_admin'])
     def delete_invitation(invitation_id):
-        if request.method == 'OPTIONS':
-            return jsonify({}), 200
-
         conn = get_db_connection()
         c = conn.cursor()
 
+        # Check if invitation exists
         c.execute('SELECT id FROM invitations WHERE id = ?', (invitation_id,))
         inv = c.fetchone()
         if not inv:
             conn.close()
             return jsonify({'message': 'Invitation not found'}), 404
 
+        # Delete the invitation
         c.execute('DELETE FROM invitations WHERE id = ?', (invitation_id,))
         conn.commit()
         conn.close()
+
         return jsonify({'message': 'Invitation deleted successfully'}), 200
 
+    # -------------------------
     # VERIFY INVITATION TOKEN
+    # -------------------------
     @app.route('/api/invitations/<token>', methods=['GET'])
     def verify_invitation(token):
         conn = get_db_connection()
@@ -120,7 +128,9 @@ def init_invitation_routes(app):
             'organization_id': invitation['organization_id']
         }), 200
 
+    # -------------------------
     # REGISTER USER FROM INVITATION
+    # -------------------------
     @app.route('/api/register', methods=['POST'])
     def register_from_invitation():
         data = request.get_json()
@@ -136,6 +146,7 @@ def init_invitation_routes(app):
         conn = get_db_connection()
         c = conn.cursor()
 
+        # Check invitation
         c.execute("SELECT is_used FROM invitations WHERE token = ?", (token,))
         inv = c.fetchone()
         if not inv:
@@ -145,13 +156,16 @@ def init_invitation_routes(app):
             conn.close()
             return jsonify({"message": "Invitation already used"}), 400
 
+        # Hash password
         hashed_password = generate_password_hash(password)
 
+        # Create user
         c.execute(
             "INSERT INTO users (email, password, role, organization_id) VALUES (?, ?, ?, ?)",
             (email, hashed_password, role, organization_id)
         )
 
+        # Mark invitation as used
         c.execute("UPDATE invitations SET is_used = 1 WHERE token = ?", (token,))
         conn.commit()
         conn.close()
