@@ -1,4 +1,3 @@
-//frontend/src/app/admin/invitations/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -54,14 +53,14 @@ export default function AdminInvitationsPage() {
   async function createInvitation() {
     setError("");
     setSuccess("");
-  
+
     if (!email || !organizationId) {
       setError("Email and Organization ID are required");
       return;
     }
-  
+
     try {
-      const res = await fetch("http://localhost:8000/api/invitations", {
+      const res = await fetch("http://localhost:8000/api/invitations", { // <-- port matches backend
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -71,14 +70,11 @@ export default function AdminInvitationsPage() {
           organization_id: Number(organizationId),
         }),
       });
-  
+
       const data = await res.json();
-  
       if (!res.ok) throw new Error(data.message);
-  
-      // ✅ SHOW TOKEN IN SUCCESS MESSAGE
+
       setSuccess(`Invitation created successfully. Token: ${data.token}`);
-  
       setEmail("");
       setOrganizationId("");
       fetchInvitations();
@@ -86,7 +82,6 @@ export default function AdminInvitationsPage() {
       setError(err.message || "Failed to create invitation");
     }
   }
-  
 
   async function deleteInvitation(id: number) {
     if (!confirm("Delete this invitation?")) return;
