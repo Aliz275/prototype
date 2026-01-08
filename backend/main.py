@@ -1,6 +1,8 @@
 from flask import Flask
 from flask_cors import CORS
 from flask_socketio import SocketIO
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import eventlet
 import os
 
@@ -21,6 +23,13 @@ apply_migrations()
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'a_default_secret_key')
 CORS(app, supports_credentials=True)
+
+# Initialize Rate Limiter
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"]
+)
 
 # Initialize SocketIO
 socketio = SocketIO(app, cors_allowed_origins="*")
