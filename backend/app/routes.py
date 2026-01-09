@@ -3,17 +3,21 @@ import sqlite3
 import bcrypt
 from flask import request, jsonify, session
 from datetime import datetime
+from marshmallow import ValidationError
+from .schemas import SignupSchema, LoginSchema, EmployeeSchema
 
 def init_routes(app, limiter):
     @app.route('/api/signup', methods=['POST'])
     @limiter.limit("10 per minute")
     def signup():
-        data = request.get_json()
+        try:
+            # Validate request data
+            data = SignupSchema().load(request.get_json())
+        except ValidationError as err:
+            return jsonify(err.messages), 400
+
         password = data.get('password')
         token = data.get('token')
-
-        if not all([password, token]):
-            return jsonify({'message': 'Password and token are required'}), 400
 
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
@@ -52,12 +56,14 @@ def init_routes(app, limiter):
     @app.route('/api/login', methods=['POST'])
     @limiter.limit("10 per minute")
     def login():
-        data = request.get_json()
+        try:
+            # Validate request data
+            data = LoginSchema().load(request.get_json())
+        except ValidationError as err:
+            return jsonify(err.messages), 400
+
         email = data.get('email')
         password = data.get('password')
-
-        if not email or not password:
-            return jsonify({'message': 'Email and password are required'}), 400
 
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
@@ -114,7 +120,12 @@ def init_routes(app, limiter):
         if not session.get('is_admin'):
             return jsonify({'message': 'Unauthorized: Admins only'}), 403
 
-        data = request.get_json()
+        try:
+            # Validate request data
+            data = EmployeeSchema().load(request.get_json())
+        except ValidationError as err:
+            return jsonify(err.messages), 400
+
         email = data.get('email')
         first_name = data.get('first_name')
         last_name = data.get('last_name')
