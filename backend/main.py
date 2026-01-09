@@ -4,7 +4,6 @@ from flask_socketio import SocketIO
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_talisman import Talisman
-import eventlet
 import os
 
 from app.db_setup import initialize_database
@@ -44,7 +43,7 @@ limiter = Limiter(
 )
 
 # Initialize SocketIO
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Initialize routes
 init_routes(app, limiter)

@@ -1,12 +1,14 @@
-### needs to be updated to the refactored version. Currently implements backend messaging features but not upto date with the refactored version.
+# how to set up secret key:
+python -c "import secrets; print(secrets.token_hex(16))"
 
-## scalability factors:
-1) Role/permission naming inconsistency — manager vs team_manager, admin vs org_admin scattered across decorators. Hard to maintain.
+example: f7faaa9ab2e1b3145a527a573f3c7489
 
-2) Session management — Flask sessions (cookie-based) don't scale across multiple backend instances without a shared store (Redis).
+then > set FLASK_SECRET_KEY=f7faaa9ab2e1b3145a527a573f3c7489 OR $env:FLASK_SECRET_KEY=f7faaa9ab2e1b3145a527a573f3c7489 if on PSH
 
-3) Socket.IO state — if you scale to multiple backend servers, socket rooms won't sync across instances (need Redis adapter).
+for now you can use: $env:FLASK_SECRET_KEY="a-secret-key-that-is-long-and-random"
 
-4) No caching — every message fetch hits the DB. Redis could help.
+once set up, python main.py
 
-5) Frontend/backend coupling — hardcoded API URLs, no env management in some places.
+
+Known issue:
+password encryption does not work as intended, will fix this asap (backend)
