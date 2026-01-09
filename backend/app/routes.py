@@ -4,8 +4,9 @@ import bcrypt
 from flask import request, jsonify, session
 from datetime import datetime
 
-def init_routes(app):
+def init_routes(app, limiter):
     @app.route('/api/signup', methods=['POST'])
+    @limiter.limit("10 per minute")
     def signup():
         data = request.get_json()
         password = data.get('password')
@@ -49,6 +50,7 @@ def init_routes(app):
             return jsonify({'message': 'Email already exists'}), 400
 
     @app.route('/api/login', methods=['POST'])
+    @limiter.limit("10 per minute")
     def login():
         data = request.get_json()
         email = data.get('email')
