@@ -3,6 +3,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_talisman import Talisman
 import eventlet
 import os
 
@@ -25,6 +26,9 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY')
 if not app.secret_key:
     raise ValueError("No FLASK_SECRET_KEY set for Flask application")
 CORS(app, supports_credentials=True)
+
+# Initialize Talisman for security headers
+Talisman(app)
 
 def get_user_id():
     if 'user_id' in session:
