@@ -2,7 +2,7 @@ import sqlite3
 import secrets
 from datetime import datetime, timedelta
 from flask import request, jsonify, session
-from werkzeug.security import generate_password_hash
+import bcrypt
 from app.auth import role_required
 
 # -------------------------
@@ -47,7 +47,7 @@ def init_invitation_routes(app):
         conn = get_db_connection()
         c = conn.cursor()
         c.execute("""
-            INSERT INTO invitations 
+            INSERT INTO invitations
             (email, token, role, organization_id, created_by, expires_at, is_used)
             VALUES (?, ?, ?, ?, ?, ?, 0)
         """, (email, token, role, organization_id, created_by, expires_at))
@@ -157,7 +157,7 @@ def init_invitation_routes(app):
             return jsonify({"message": "Invitation already used"}), 400
 
         # Hash password
-        hashed_password = generate_password_hash(password)
+        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
         # Create user
         c.execute(
