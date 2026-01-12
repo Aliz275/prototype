@@ -11,6 +11,7 @@ type Invitation = {
   organization_id: number;
   expires_at: string;
   is_used: boolean;
+  token?: string; // include token for generating link
 };
 
 export default function AdminInvitationsPage() {
@@ -23,6 +24,7 @@ export default function AdminInvitationsPage() {
   const [organizationId, setOrganizationId] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [successLink, setSuccessLink] = useState("");
 
   /* 🔐 Protect route */
   useEffect(() => {
@@ -40,7 +42,7 @@ export default function AdminInvitationsPage() {
 
   async function fetchInvitations() {
     try {
-      const res = await fetch("http://localhost:8000/api/invitations", { // <-- make sure this port matches backend
+      const res = await fetch("http://localhost:8000/api/invitations", {
         credentials: "include",
       });
       const data = await res.json();
@@ -53,6 +55,7 @@ export default function AdminInvitationsPage() {
   async function createInvitation() {
     setError("");
     setSuccess("");
+    setSuccessLink("");
 
     if (!email || !organizationId) {
       setError("Email and Organization ID are required");
@@ -60,7 +63,7 @@ export default function AdminInvitationsPage() {
     }
 
     try {
-      const res = await fetch("http://localhost:8000/api/invitations", { // <-- port matches backend
+      const res = await fetch("http://localhost:8000/api/invitations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -74,7 +77,11 @@ export default function AdminInvitationsPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message);
 
-      setSuccess(`Invitation created successfully. Token: ${data.token}`);
+      // Create clickable link
+      const link = `http://localhost:3000/accept-invitation?token=${data.token}`;
+      setSuccess("Invitation created successfully.");
+      setSuccessLink(link);
+
       setEmail("");
       setOrganizationId("");
       fetchInvitations();
@@ -85,7 +92,7 @@ export default function AdminInvitationsPage() {
 
   async function deleteInvitation(id: number) {
     if (!confirm("Delete this invitation?")) return;
-  
+
     try {
       const res = await fetch(`http://localhost:8000/api/invitations/${id}`, {
         method: "DELETE",
@@ -94,30 +101,42 @@ export default function AdminInvitationsPage() {
           "Content-Type": "application/json",
         },
       });
-  
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to delete invitation");
-  
+
       fetchInvitations();
     } catch (err: any) {
       setError(err.message || "Failed to delete invitation");
     }
   }
-  
 
   if (!user) return <p className="p-6">Loading...</p>;
 
   return (
     <main className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-3xl font-bold text-blue-900 mb-6">
-        Admin – Invitations
-      </h1>
+      <h1 className="text-3xl font-bold text-blue-900 mb-6">Admin – Invitations</h1>
 
       {/* CREATE INVITATION */}
       <div className="bg-white rounded-xl shadow p-6 mb-6">
         <h2 className="text-xl font-semibold mb-4">Create Invitation</h2>
         {error && <p className="text-red-500 mb-2">{error}</p>}
-        {success && <p className="text-green-600 mb-2">{success}</p>}
+        {success && (
+          <p className="text-green-600 mb-2">
+            {success}
+            <br />
+            {successLink && (
+              <a
+                href={successLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-700 underline"
+              >
+                {successLink}
+              </a>
+            )}
+          </p>
+        )}
 
         <div className="grid gap-3 md:grid-cols-3">
           <input
@@ -171,6 +190,16 @@ export default function AdminInvitationsPage() {
                   <div className="text-xs text-gray-400">
                     Expires: {inv.expires_at} | Used: {inv.is_used ? "Yes" : "No"}
                   </div>
+                  {inv.token && (
+                    <a
+                      href={`http://localhost:3000/accept-invitation?token=${inv.token}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-700 underline text-sm mt-1 inline-block"
+                    >
+                      http://localhost:3000/accept-invitation?token={inv.token}
+                    </a>
+                  )}
                 </div>
                 <button
                   onClick={() => deleteInvitation(inv.id)}
