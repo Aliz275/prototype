@@ -1,9 +1,16 @@
 # backend/app/insert_test_data.py
 import sqlite3
 import bcrypt
+import os
+import sys
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from app.db_setup import initialize_database
+
+DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database.db')
 
 def insert_test_data():
-    conn = sqlite3.connect('database.db')
+    initialize_database()
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     # --- Create a test organization ---
@@ -65,6 +72,21 @@ def insert_test_data():
         VALUES (?, ?, ?, ?, ?)
     """, (3, "Personal Assignment", "Visible to employee1@test.com only", user_ids["admin@test.com"], 0))
     c.execute("INSERT OR IGNORE INTO user_assignments (user_id, assignment_id) VALUES (?, ?)", (employee1_id, 3))
+
+    # --- Create a test conversation ---
+    c.execute("INSERT OR IGNORE INTO conversations (id, name, is_group_chat, created_by_id) VALUES (?, ?, ?, ?)",
+              (1, "Test Group Chat", 1, user_ids["manager@test.com"]))
+    c.execute("INSERT OR IGNORE INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)", (1, user_ids["manager@test.com"]))
+    c.execute("INSERT OR IGNORE INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)", (1, user_ids["employee1@test.com"]))
+    c.execute("INSERT OR IGNORE INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)", (1, user_ids["employee2@test.com"]))
+    
+    # --- Create test messages ---
+    c.execute("INSERT OR IGNORE INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)",
+              (1, user_ids["manager@test.com"], "Hello team!"))
+    c.execute("INSERT OR IGNORE INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)",
+              (1, user_ids["employee1@test.com"], "Hello manager!"))
+    c.execute("INSERT OR IGNORE INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)",
+                (1, user_ids["employee2@test.com"], "Hello!"))
 
     conn.commit()
     conn.close()

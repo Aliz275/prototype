@@ -96,6 +96,45 @@ def initialize_database():
         FOREIGN KEY (graded_by) REFERENCES users (id)
     )''')
 
+    # --- Messaging Tables ---
+    c.execute('''CREATE TABLE IF NOT EXISTS conversations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        is_group_chat INTEGER NOT NULL DEFAULT 0,
+        created_by_id INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (created_by_id) REFERENCES users (id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS conversation_participants (
+        user_id INTEGER NOT NULL,
+        conversation_id INTEGER NOT NULL,
+        last_read_timestamp TIMESTAMP,
+        PRIMARY KEY (user_id, conversation_id),
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        FOREIGN KEY (conversation_id) REFERENCES conversations (id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL,
+        sender_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (conversation_id) REFERENCES conversations (id),
+        FOREIGN KEY (sender_id) REFERENCES users (id)
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS message_read_status (
+        message_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        PRIMARY KEY (message_id, user_id),
+        FOREIGN KEY (message_id) REFERENCES messages (id),
+        FOREIGN KEY (user_id) REFERENCES users (id)
+    )''')
+
     conn.commit()
     conn.close()
     print(f"Database initialized at {DB_PATH}")
