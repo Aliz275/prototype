@@ -1,3 +1,5 @@
+#backend/main.py
+
 from flask import Flask, session
 from flask_cors import CORS
 from flask_socketio import SocketIO
@@ -43,7 +45,12 @@ limiter = Limiter(
 )
 
 # Initialize SocketIO
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="http://localhost:3000",
+    manage_session=False,
+    async_mode="threading"
+)
 
 # Initialize routes
 init_routes(app, limiter)

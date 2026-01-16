@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/AuthContext';
-import { FaUserTie } from 'react-icons/fa';
+import { FaUserTie, FaComments } from 'react-icons/fa';
 
 export default function Navbar() {
   const router = useRouter();
@@ -16,29 +16,48 @@ export default function Navbar() {
 
   return (
     <nav className="bg-gray-800 text-white p-4 flex justify-between items-center">
+      {/* Left side */}
       <div className="text-xl font-bold">
         <Link href="/">AuthApp</Link>
       </div>
 
+      {/* Right side */}
       <div className="flex items-center space-x-4">
+        {/* Assignments */}
         <Link href="/assignments">Assignments</Link>
 
+        {/* 🔹 Messages tab (NEW) */}
+        {user && (
+          <Link
+            href="/messages"
+            className="flex items-center gap-1 hover:text-gray-300"
+          >
+            <FaComments />
+            Messages
+          </Link>
+        )}
+
+        {/* Admin section */}
         {(user?.role === 'org_admin' ||
           user?.role === 'super_admin' ||
           user?.role === 'team_manager') && (
-          <Link href="/admin/assignments" className="flex items-center">
-            <FaUserTie className="mr-1" />
+          <Link href="/admin/assignments" className="flex items-center gap-1">
+            <FaUserTie />
             Admin
           </Link>
         )}
 
-        {/* 🔹 Show Invitations link only for super_admin */}
+        {/* Invitations – super admin only */}
         {user?.role === 'super_admin' && (
-          <Link href="/admin/invitations" className="ml-2 px-2 py-1 rounded hover:bg-gray-700">
+          <Link
+            href="/admin/invitations"
+            className="px-2 py-1 rounded hover:bg-gray-700"
+          >
             Invitations
           </Link>
         )}
 
+        {/* Auth */}
         {!user ? (
           <Link href="/login">Login</Link>
         ) : (
