@@ -9,7 +9,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database.db')
 
 def init_messaging_routes(app, socketio):
     @app.route('/api/conversations', methods=['POST'])
-    @role_required(['employee', 'manager', 'admin'])
+    @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def create_conversation():
         data = request.get_json()
         participant_ids = data.get('participant_ids')
@@ -25,7 +25,7 @@ def init_messaging_routes(app, socketio):
 
         is_group_chat = len(participant_ids) > 2
         
-        if is_group_chat and role not in ['manager', 'admin']:
+        if is_group_chat and role not in ['manager', 'admin', 'super_admin']:
             return jsonify({'message': 'Only managers and admins can create group chats'}), 403
             
         name = data.get('name') if is_group_chat else None
@@ -42,7 +42,7 @@ def init_messaging_routes(app, socketio):
         return jsonify({'message': 'Conversation created successfully', 'conversation_id': conversation_id}), 201
 
     @app.route('/api/conversations', methods=['GET'])
-    @role_required(['employee', 'manager', 'admin'])
+    @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def get_conversations():
         user_id = session.get('user_id')
         conn = sqlite3.connect(DB_PATH)
@@ -58,7 +58,7 @@ def init_messaging_routes(app, socketio):
         return jsonify(conversations), 200
 
     @app.route('/api/conversations/<int:conversation_id>/messages', methods=['GET'])
-    @role_required(['employee', 'manager', 'admin'])
+    @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def get_messages(conversation_id):
         user_id = session.get('user_id')
         conn = sqlite3.connect(DB_PATH)
@@ -85,7 +85,7 @@ def init_messaging_routes(app, socketio):
         return jsonify(messages), 200
 
     @app.route('/api/conversations/<int:conversation_id>/messages', methods=['POST'])
-    @role_required(['employee', 'manager', 'admin'])
+    @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def send_message(conversation_id):
         data = request.get_json()
         content = data.get('content')
@@ -113,7 +113,7 @@ def init_messaging_routes(app, socketio):
         return jsonify({'message': 'Message sent successfully'}), 201
 
     @app.route('/api/messages/<int:message_id>', methods=['DELETE'])
-    @role_required(['employee', 'manager', 'admin'])
+    @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def delete_message(message_id):
         user_id = session.get('user_id')
         role = session.get('role')
@@ -132,7 +132,7 @@ def init_messaging_routes(app, socketio):
         conversation = c.fetchone()
         is_group_chat = conversation[0]
 
-        if user_id == sender_id or (role in ['manager', 'admin'] and is_group_chat):
+        if user_id == sender_id or (role in ['manager', 'admin', 'super_admin'] and is_group_chat):
             c.execute("UPDATE messages SET is_deleted = 1 WHERE id = ?", (message_id,))
             conn.commit()
             conn.close()
@@ -143,7 +143,7 @@ def init_messaging_routes(app, socketio):
             return jsonify({'message': 'Unauthorized to delete this message'}), 403
 
     @app.route('/api/messages/<int:message_id>', methods=['PUT'])
-    @role_required(['employee', 'manager', 'admin'])
+    @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def edit_message(message_id):
         data = request.get_json()
         content = data.get('content')
@@ -170,7 +170,7 @@ def init_messaging_routes(app, socketio):
         return jsonify({'message': 'Message edited successfully'}), 200
 
     @app.route('/api/conversations/<int:conversation_id>/participants', methods=['POST'])
-    @role_required(['manager', 'admin'])
+    @role_required(['manager', 'admin', 'super_admin'])
     def add_participant(conversation_id):
         data = request.get_json()
         user_id = data.get('user_id')
@@ -183,7 +183,7 @@ def init_messaging_routes(app, socketio):
         return jsonify({'message': 'Participant added successfully'}), 201
 
     @app.route('/api/conversations/<int:conversation_id>/participants/<int:user_id>', methods=['DELETE'])
-    @role_required(['manager', 'admin'])
+    @role_required(['manager', 'admin', 'super_admin'])
     def remove_participant(conversation_id, user_id):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -236,7 +236,7 @@ def init_messaging_routes(app, socketio):
                 conn.close()
     
     @app.route('/api/search/messages', methods=['GET'])
-    @role_required(['employee', 'manager', 'admin'])
+    @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def search_messages():
         query = request.args.get('q')
         user_id = session.get('user_id')
