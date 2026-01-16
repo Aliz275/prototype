@@ -2,7 +2,7 @@
 import sqlite3
 from flask import request, jsonify, session
 import os
-from .auth import role_required
+from .auth import role_required, get_current_user
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'database.db')
@@ -20,6 +20,10 @@ def init_assignment_routes(app):
     @app.route('/api/assignments', methods=['POST'])
     @role_required(['super_admin', 'org_admin', 'team_manager'])
     def create_assignment():
+        user_id, user_role, user_organization_id = get_current_user()
+        if not user_id:
+            return jsonify({'message': 'Unauthorized'}), 401
+
         data = request.get_json() or {}
         title = data.get('title')
         description = data.get('description')
@@ -38,21 +42,36 @@ def init_assignment_routes(app):
 
         conn = _connect()
         c = conn.cursor()
-        c.execute('SELECT id, role FROM users WHERE email = ?', (session.get('email'),))
-        user = c.fetchone()
-        if not user:
-            conn.close()
-            return jsonify({'message': 'User not found'}), 404
 
-        user_id, user_role = user[0], user[1]
-
-        # team manager validation (if team_id present)
-        if team_id and user_role == 'team_manager':
-            c.execute('SELECT manager_id FROM teams WHERE id = ?', (team_id,))
-            manager = c.fetchone()
-            if not manager or manager[0] != user_id:
+        if user_role == 'org_admin':
+            # Org admin can't assign to a team, only to employees in their org
+            if team_id:
+                c.execute('SELECT organization_id FROM teams WHERE id = ?', (team_id,))
+                team_org = c.fetchone()
+                if not team_org or team_org[0] != user_organization_id:
+                    conn.close()
+                    return jsonify({'message': 'Unauthorized: You can only assign to teams in your own organization'}), 403
+            for emp_id in employee_ids:
+                c.execute('SELECT organization_id FROM users WHERE id = ?', (emp_id,))
+                emp_org = c.fetchone()
+                if not emp_org or emp_org[0] != user_organization_id:
+                    conn.close()
+                    return jsonify({'message': f'Unauthorized: User {emp_id} is not in your organization'}), 403
+        
+        elif user_role == 'team_manager':
+            c.execute('SELECT organization_id, manager_id FROM teams WHERE id = ?', (team_id,))
+            team_info = c.fetchone()
+            if not team_info or team_info[1] != user_id:
                 conn.close()
                 return jsonify({'message': 'Unauthorized: Not manager of this team'}), 403
+            
+            # Check if all employees are in the manager's team
+            for emp_id in employee_ids:
+                c.execute('SELECT team_id FROM team_members WHERE user_id = ? AND team_id = ?', (emp_id, team_id))
+                member = c.fetchone()
+                if not member:
+                    conn.close()
+                    return jsonify({'message': f'Unauthorized: User {emp_id} is not in your team'}), 403
 
         is_general = 1 if (not employee_ids and not team_id) else 0
 
@@ -71,34 +90,35 @@ def init_assignment_routes(app):
 
     # ---------------- GET ALL ASSIGNMENTS ----------------
     @app.route('/api/assignments', methods=['GET'])
+    @role_required(['super_admin', 'org_admin', 'team_manager', 'employee'])
     def get_assignments():
-        if 'email' not in session:
+        user_id, user_role, user_organization_id = get_current_user()
+        if not user_id:
             return jsonify({'message': 'Unauthorized'}), 401
 
         conn = _connect()
         c = conn.cursor()
-        c.execute('SELECT id, role FROM users WHERE email = ?', (session.get('email'),))
-        user = c.fetchone()
-        if not user:
-            conn.close()
-            return jsonify({'message': 'User not found'}), 404
 
-        user_id, role = user[0], user[1]
-
-        if role == 'org_admin':
-            c.execute('SELECT * FROM assignments')
-        elif role == 'team_manager':
+        if user_role == 'super_admin':
+             c.execute('SELECT a.* FROM assignments a')
+        elif user_role == 'org_admin':
+            c.execute('''
+                SELECT a.* FROM assignments a
+                JOIN users u ON a.created_by_id = u.id
+                WHERE u.organization_id = ?
+            ''', (user_organization_id,))
+        elif user_role == 'team_manager':
             c.execute('''
                 SELECT DISTINCT a.* FROM assignments a
                 LEFT JOIN teams t ON a.team_id = t.id
-                WHERE a.is_general = 1 OR t.manager_id = ?
+                WHERE t.manager_id = ? OR a.is_general = 1
             ''', (user_id,))
-        else:
+        else: # employee
             c.execute('''
                 SELECT DISTINCT a.* FROM assignments a
                 LEFT JOIN user_assignments ua ON a.id = ua.assignment_id
                 LEFT JOIN team_members tm ON a.team_id = tm.team_id
-                WHERE a.is_general = 1 OR ua.user_id = ? OR tm.user_id = ?
+                WHERE ua.user_id = ? OR tm.user_id = ? OR a.is_general = 1
             ''', (user_id, user_id))
         
         assignments = c.fetchall()
@@ -108,13 +128,8 @@ def init_assignment_routes(app):
             c.execute('SELECT user_id FROM user_assignments WHERE assignment_id = ?', (aid,))
             employee_ids = [row[0] for row in c.fetchall()]
             assignments_list.append({
-                'id': aid,
-                'title': a[1],
-                'description': a[2],
-                'due_date': a[3],
-                'is_general': a[4],
-                'team_id': a[5],
-                'created_by_id': a[6],
+                'id': aid, 'title': a[1], 'description': a[2], 'due_date': a[3],
+                'is_general': a[4], 'team_id': a[5], 'created_by_id': a[6],
                 'employee_ids': employee_ids
             })
 
@@ -123,39 +138,44 @@ def init_assignment_routes(app):
 
     # ---------------- GET SINGLE ASSIGNMENT ----------------
     @app.route('/api/assignments/<int:assignment_id>', methods=['GET'])
+    @role_required(['super_admin', 'org_admin', 'team_manager', 'employee'])
     def get_assignment(assignment_id):
-        if 'email' not in session:
+        user_id, user_role, user_organization_id = get_current_user()
+        if not user_id:
             return jsonify({'message': 'Unauthorized'}), 401
 
         conn = _connect()
         c = conn.cursor()
 
-        c.execute('SELECT * FROM assignments WHERE id = ?', (assignment_id,))
+        c.execute('SELECT a.*, u.organization_id FROM assignments a JOIN users u ON a.created_by_id = u.id WHERE a.id = ?', (assignment_id,))
         assignment = c.fetchone()
 
         if not assignment:
             conn.close()
             return jsonify({'message': 'Assignment not found'}), 404
         
+        if user_role != 'super_admin' and assignment[7] != user_organization_id:
+            conn.close()
+            return jsonify({'message': 'Unauthorized: You can only view assignments in your own organization'}), 403
+
         c.execute('SELECT user_id FROM user_assignments WHERE assignment_id = ?', (assignment_id,))
         employee_ids = [row[0] for row in c.fetchall()]
 
         conn.close()
         return jsonify({'assignment': {
-            'id': assignment[0],
-            'title': assignment[1],
-            'description': assignment[2],
-            'due_date': assignment[3],
-            'is_general': assignment[4],
-            'team_id': assignment[5],
-            'created_by_id': assignment[6],
-            'employee_ids': employee_ids
+            'id': assignment[0], 'title': assignment[1], 'description': assignment[2],
+            'due_date': assignment[3], 'is_general': assignment[4], 'team_id': assignment[5],
+            'created_by_id': assignment[6], 'employee_ids': employee_ids
         }}), 200
 
     # ---------------- UPDATE ASSIGNMENT ----------------
     @app.route('/api/assignments/<int:assignment_id>', methods=['PUT'])
-    @role_required(['org_admin', 'team_manager'])
+    @role_required(['super_admin', 'org_admin', 'team_manager'])
     def update_assignment(assignment_id):
+        user_id, user_role, user_organization_id = get_current_user()
+        if not user_id:
+            return jsonify({'message': 'Unauthorized'}), 401
+
         data = request.get_json() or {}
         title = data.get('title')
         description = data.get('description')
@@ -171,6 +191,23 @@ def init_assignment_routes(app):
 
         conn = _connect()
         c = conn.cursor()
+
+        c.execute('SELECT a.*, u.organization_id FROM assignments a JOIN users u ON a.created_by_id = u.id WHERE a.id = ?', (assignment_id,))
+        assignment = c.fetchone()
+        if not assignment:
+            conn.close()
+            return jsonify({'message': 'Assignment not found'}), 404
+
+        if user_role == 'org_admin' and assignment[7] != user_organization_id:
+            conn.close()
+            return jsonify({'message': 'Unauthorized: Not in your organization'}), 403
+        elif user_role == 'team_manager':
+            c.execute('SELECT manager_id FROM teams WHERE id = ?', (assignment[5],))
+            manager = c.fetchone()
+            if not manager or manager[0] != user_id:
+                conn.close()
+                return jsonify({'message': 'Unauthorized: Not manager of this team'}), 403
+
         c.execute('UPDATE assignments SET title = ?, description = ?, due_date = ?, team_id = ? WHERE id = ?',
                   (title, description, due_date, team_id, assignment_id))
 
@@ -186,64 +223,33 @@ def init_assignment_routes(app):
 
     # ---------------- DELETE ASSIGNMENT ----------------
     @app.route('/api/assignments/<int:assignment_id>', methods=['DELETE'])
-    @role_required(['org_admin', 'team_manager'])
+    @role_required(['super_admin', 'org_admin', 'team_manager'])
     def delete_assignment(assignment_id):
+        user_id, user_role, user_organization_id = get_current_user()
+        if not user_id:
+            return jsonify({'message': 'Unauthorized'}), 401
+
         conn = _connect()
         c = conn.cursor()
+
+        c.execute('SELECT a.*, u.organization_id FROM assignments a JOIN users u ON a.created_by_id = u.id WHERE a.id = ?', (assignment_id,))
+        assignment = c.fetchone()
+        if not assignment:
+            conn.close()
+            return jsonify({'message': 'Assignment not found'}), 404
+
+        if user_role == 'org_admin' and assignment[7] != user_organization_id:
+            conn.close()
+            return jsonify({'message': 'Unauthorized: Not in your organization'}), 403
+        elif user_role == 'team_manager':
+            c.execute('SELECT manager_id FROM teams WHERE id = ?', (assignment[5],))
+            manager = c.fetchone()
+            if not manager or manager[0] != user_id:
+                conn.close()
+                return jsonify({'message': 'Unauthorized: Not manager of this team'}), 403
+
         c.execute('DELETE FROM assignments WHERE id = ?', (assignment_id,))
         c.execute('DELETE FROM user_assignments WHERE assignment_id = ?', (assignment_id,))
         conn.commit()
         conn.close()
         return jsonify({'message': 'Assignment deleted successfully!'}), 200
-
-    # ---------------- EXTEND DUE DATE ----------------
-    @app.route('/api/assignments/<int:assignment_id>/extend', methods=['PUT'])
-    @role_required(['org_admin', 'team_manager'])
-    def extend_due_date(assignment_id):
-        data = request.get_json()
-        new_due_date = data.get('due_date')
-
-        if not new_due_date:
-            return jsonify({'message': 'New due date is required'}), 400
-
-        try:
-            new_due_date = datetime.fromisoformat(new_due_date)
-        except ValueError:
-            return jsonify({'message': 'Invalid due date format. Use ISO 8601 format.'}), 400
-
-        conn = _connect()
-        c = conn.cursor()
-        c.execute('UPDATE assignments SET due_date = ? WHERE id = ?', (new_due_date, assignment_id))
-        conn.commit()
-        conn.close()
-
-        return jsonify({'message': 'Due date extended successfully!'}), 200
-
-    # ---------------- RE-ASSIGN ASSIGNMENT ----------------
-    @app.route('/api/assignments/<int:assignment_id>/reassign', methods=['POST'])
-    @role_required(['org_admin', 'team_manager'])
-    def reassign_assignment(assignment_id):
-        data = request.get_json()
-        employee_ids = data.get('employee_ids', [])
-        team_id = data.get('team_id')
-
-        if not employee_ids and not team_id:
-            return jsonify({'message': 'Employee IDs or a team ID is required'}), 400
-
-        conn = _connect()
-        c = conn.cursor()
-
-        if employee_ids:
-            # Clear existing assignments before re-assigning
-            c.execute("DELETE FROM user_assignments WHERE assignment_id = ?", (assignment_id,))
-            for emp_id in employee_ids:
-                c.execute('INSERT OR IGNORE INTO user_assignments (user_id, assignment_id) VALUES (?, ?)',
-                          (emp_id, assignment_id))
-
-        if team_id:
-            c.execute('UPDATE assignments SET team_id = ? WHERE id = ?', (team_id, assignment_id))
-
-        conn.commit()
-        conn.close()
-
-        return jsonify({'message': 'Assignment re-assigned successfully!'}), 200
