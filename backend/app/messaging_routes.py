@@ -1,6 +1,6 @@
 from flask import request, jsonify, session
 from flask_socketio import emit, join_room, leave_room
-from app.auth import role_required
+from app.auth import role_required, get_current_user
 import sqlite3
 import os
 from datetime import datetime
@@ -11,27 +11,55 @@ def init_messaging_routes(app, socketio):
     @app.route('/api/conversations', methods=['POST'])
     @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def create_conversation():
+        user_id, user_role, user_organization_id = get_current_user()
+        if not user_id:
+            return jsonify({'message': 'Unauthorized'}), 401
+
         data = request.get_json()
         participant_ids = data.get('participant_ids')
-        user_id = session.get('user_id')
-        role = session.get('role')
 
         if not participant_ids:
             return jsonify({'message': 'Participant IDs are required'}), 400
 
         participant_ids.append(user_id)
-        # remove duplicates
         participant_ids = list(set(participant_ids))
-
-        is_group_chat = len(participant_ids) > 2
-        
-        if is_group_chat and role not in ['manager', 'admin', 'super_admin']:
-            return jsonify({'message': 'Only managers and admins can create group chats'}), 403
-            
-        name = data.get('name') if is_group_chat else None
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
+
+        # Authorization checks
+        if user_role == 'employee':
+            for pid in participant_ids:
+                c.execute('SELECT organization_id FROM users WHERE id = ?', (pid,))
+                org_id = c.fetchone()
+                if not org_id or org_id[0] != user_organization_id:
+                    conn.close()
+                    return jsonify({'message': 'Employees can only message users within their own organization.'}), 403
+        elif user_role == 'team_manager':
+            # Check if all participants are in the same org or are team managers
+            for pid in participant_ids:
+                c.execute('SELECT organization_id, role FROM users WHERE id = ?', (pid,))
+                p_info = c.fetchone()
+                if not p_info or (p_info[0] != user_organization_id and p_info[1] != 'team_manager'):
+                    conn.close()
+                    return jsonify({'message': 'Team managers can only message users in their org or other team managers.'}), 403
+        elif user_role == 'org_admin':
+            # Check if all participants are in the same org or are org admins
+            for pid in participant_ids:
+                c.execute('SELECT organization_id, role FROM users WHERE id = ?', (pid,))
+                p_info = c.fetchone()
+                if not p_info or (p_info[0] != user_organization_id and p_info[1] != 'org_admin'):
+                    conn.close()
+                    return jsonify({'message': 'Org admins can only message users in their org or other org admins.'}), 403
+
+        is_group_chat = len(participant_ids) > 2
+
+        if is_group_chat and user_role not in ['manager', 'admin', 'super_admin']:
+            conn.close()
+            return jsonify({'message': 'Only managers and admins can create group chats'}), 403
+
+        name = data.get('name') if is_group_chat else None
+
         c.execute("INSERT INTO conversations (name, is_group_chat, created_by_id) VALUES (?, ?, ?)", (name, is_group_chat, user_id))
         conversation_id = c.lastrowid
         for participant_id in participant_ids:
@@ -67,7 +95,7 @@ def init_messaging_routes(app, socketio):
         participant = c.fetchone()
         if not participant:
             return jsonify({'message': 'Not a participant of this conversation'}), 403
-        
+
         c.execute("""
             SELECT m.id, m.content, m.created_at, u.email as sender_email
             FROM messages m
@@ -76,11 +104,11 @@ def init_messaging_routes(app, socketio):
             ORDER BY m.created_at ASC
         """, (conversation_id,))
         messages = c.fetchall()
-        
+
         # Update last_read_timestamp
         c.execute("UPDATE conversation_participants SET last_read_timestamp = ? WHERE conversation_id = ? AND user_id = ?", (datetime.utcnow(), conversation_id, user_id))
         conn.commit()
-        
+
         conn.close()
         return jsonify(messages), 200
 
@@ -104,7 +132,7 @@ def init_messaging_routes(app, socketio):
         c.execute("SELECT created_at FROM messages WHERE id = ?", (message_id,))
         created_at = c.fetchone()[0]
         conn.close()
-        
+
         c.execute("SELECT u.email FROM users u WHERE u.id = ?", (user_id,))
         sender_email = c.fetchone()[0]
 
@@ -115,8 +143,9 @@ def init_messaging_routes(app, socketio):
     @app.route('/api/messages/<int:message_id>', methods=['DELETE'])
     @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def delete_message(message_id):
-        user_id = session.get('user_id')
-        role = session.get('role')
+        user_id, user_role, _ = get_current_user()
+        if not user_id:
+            return jsonify({'message': 'Unauthorized'}), 401
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -127,15 +156,23 @@ def init_messaging_routes(app, socketio):
             return jsonify({'message': 'Message not found'}), 404
 
         sender_id, conversation_id = message
-        
+
         c.execute("SELECT is_group_chat FROM conversations WHERE id = ?", (conversation_id,))
         conversation = c.fetchone()
         is_group_chat = conversation[0]
 
-        if user_id == sender_id or (role in ['manager', 'admin', 'super_admin'] and is_group_chat):
+        can_delete = False
+        if user_id == sender_id:
+            can_delete = True
+        elif user_role in ['manager', 'admin', 'super_admin'] and is_group_chat:
+            c.execute("SELECT 1 FROM conversation_participants WHERE user_id = ? AND conversation_id = ?", (user_id, conversation_id))
+            is_participant = c.fetchone()
+            if is_participant:
+                can_delete = True
+
+        if can_delete:
             c.execute("UPDATE messages SET is_deleted = 1 WHERE id = ?", (message_id,))
             conn.commit()
-            conn.close()
             socketio.emit('message_deleted', {'message_id': message_id, 'conversation_id': conversation_id}, room=f'conversation_{conversation_id}')
             return jsonify({'message': 'Message deleted successfully'}), 200
         else:
@@ -156,7 +193,7 @@ def init_messaging_routes(app, socketio):
         if not message:
             conn.close()
             return jsonify({'message': 'Message not found'}), 404
-        
+
         sender_id, conversation_id = message
 
         if user_id != sender_id:
@@ -191,7 +228,7 @@ def init_messaging_routes(app, socketio):
         conn.commit()
         conn.close()
         return jsonify({'message': 'Participant removed successfully'}), 200
-    
+
     @socketio.on('join')
     def on_join(data):
         conversation_id = data['conversation_id']
@@ -234,7 +271,7 @@ def init_messaging_routes(app, socketio):
                 pass
             finally:
                 conn.close()
-    
+
     @app.route('/api/search/messages', methods=['GET'])
     @role_required(['employee', 'manager', 'admin', 'super_admin'])
     def search_messages():
