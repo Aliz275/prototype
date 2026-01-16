@@ -1,5 +1,21 @@
+import sqlite3
 from functools import wraps
 from flask import session, jsonify
+
+def get_current_user():
+    if 'email' not in session:
+        return None, None, None
+
+    conn = sqlite3.connect('database.db')
+    c = conn.cursor()
+    c.execute('SELECT id, role, organization_id FROM users WHERE email = ?', (session['email'],))
+    user = c.fetchone()
+    conn.close()
+
+    if not user:
+        return None, None, None
+
+    return user[0], user[1], user[2]
 
 def role_required(allowed_roles):
     def decorator(f):

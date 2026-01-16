@@ -1,12 +1,12 @@
 import sqlite3
 from flask import request, jsonify, session
+from .auth import role_required, get_current_user
 
 def init_org_routes(app):
 
     @app.route('/api/organizations', methods=['POST'])
+    @role_required(['super_admin'])
     def create_organization():
-        # In a real-world scenario, you'd want to protect this route,
-        # possibly making it accessible only to a Super Admin.
         data = request.get_json()
         name = data.get('name')
 
@@ -25,9 +25,11 @@ def init_org_routes(app):
             return jsonify({'message': 'Organization name already exists'}), 400
 
     @app.route('/api/teams', methods=['POST'])
+    @role_required(['org_admin'])
     def create_team():
-        if not session.get('is_admin'): # For now, we'll assume Org Admins are the ones creating teams
-            return jsonify({'message': 'Unauthorized: Admins only'}), 403
+        user_id, user_role, user_organization_id = get_current_user()
+        if not user_id:
+            return jsonify({'message': 'Unauthorized'}), 401
 
         data = request.get_json()
         name = data.get('name')
@@ -35,6 +37,9 @@ def init_org_routes(app):
 
         if not name or not organization_id:
             return jsonify({'message': 'Team name and organization ID are required'}), 400
+
+        if user_organization_id != organization_id:
+            return jsonify({'message': 'Unauthorized: You can only create teams in your own organization'}), 403
 
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
@@ -46,20 +51,37 @@ def init_org_routes(app):
         return jsonify({'message': 'Team created successfully!', 'team_id': team_id}), 201
 
     @app.route('/api/teams/<int:team_id>/members', methods=['POST'])
+    @role_required(['org_admin'])
     def add_team_member(team_id):
-        if not session.get('is_admin'):
-            return jsonify({'message': 'Unauthorized: Admins only'}), 403
+        user_id, user_role, user_organization_id = get_current_user()
+        if not user_id:
+            return jsonify({'message': 'Unauthorized'}), 401
 
         data = request.get_json()
-        user_id = data.get('user_id')
+        new_member_user_id = data.get('user_id')
 
-        if not user_id:
+        if not new_member_user_id:
             return jsonify({'message': 'User ID is required'}), 400
 
         conn = sqlite3.connect('database.db')
         c = conn.cursor()
+
+        # Check if the team is in the admin's organization
+        c.execute('SELECT organization_id FROM teams WHERE id = ?', (team_id,))
+        team_org = c.fetchone()
+        if not team_org or team_org[0] != user_organization_id:
+            conn.close()
+            return jsonify({'message': 'Unauthorized: You can only add members to teams in your own organization'}), 403
+
+        # Check if the user to be added is in the same organization
+        c.execute('SELECT organization_id FROM users WHERE id = ?', (new_member_user_id,))
+        new_member_org = c.fetchone()
+        if not new_member_org or new_member_org[0] != user_organization_id:
+            conn.close()
+            return jsonify({'message': 'Unauthorized: You can only add users from your own organization to a team'}), 403
+
         try:
-            c.execute('INSERT INTO team_members (user_id, team_id) VALUES (?, ?)', (user_id, team_id))
+            c.execute('INSERT INTO team_members (user_id, team_id) VALUES (?, ?)', (new_member_user_id, team_id))
             conn.commit()
         except sqlite3.IntegrityError:
             conn.close()
