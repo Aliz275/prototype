@@ -30,16 +30,35 @@ type Invite = {
 
 const API_BASE = "http://localhost:8000";
 
+// =========================
+// SAFE FETCH JSON HELPER
+// =========================
+async function safeFetchJson(url: string, options?: RequestInit): Promise<any | null> {
+  try {
+    const res = await fetch(url, options);
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch {
+      console.error(`Invalid JSON from ${url}:`, text);
+      return null;
+    }
+  } catch (err) {
+    console.error(`Fetch error for ${url}:`, err);
+    return null;
+  }
+}
+
+// =========================
+// COMPONENT
+// =========================
 export default function ConversationList({ onSelect }: { onSelect: (id: number) => void }) {
   const { user } = useAuth();
-
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // New message modal
   const [showNewMessage, setShowNewMessage] = useState(false);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
@@ -52,26 +71,22 @@ export default function ConversationList({ onSelect }: { onSelect: (id: number) 
     if (!user) return;
 
     async function loadConversations() {
-      try {
-        setLoading(true);
-        setError("");
+      setLoading(true);
+      setError("");
 
-        const res = await fetch(`${API_BASE}/api/conversations`, { credentials: "include" });
-        if (!res.ok) throw new Error("Failed to load conversations");
-
-        const data: Conversation[] = await res.json();
-        setConversations(data || []);
-
-        if (data?.length > 0) {
+      const data = await safeFetchJson(`${API_BASE}/api/conversations`, { credentials: "include" });
+      if (data && Array.isArray(data)) {
+        setConversations(data);
+        if (data.length > 0) {
           setActiveId(data[0].id);
           onSelect(data[0].id);
         }
-      } catch (err: any) {
-        setError(err.message || "Error loading conversations");
+      } else {
+        setError("Failed to load conversations — check backend response or rate limit");
         setConversations([]);
-      } finally {
-        setLoading(false);
       }
+
+      setLoading(false);
     }
 
     loadConversations();
@@ -85,27 +100,23 @@ export default function ConversationList({ onSelect }: { onSelect: (id: number) 
 
     async function loadUsersAndInvites() {
       try {
-        // Non-null assertion since we checked already
         const userId = user!.id;
 
-        // Fetch existing users
-        const resUsers = await fetch(`${API_BASE}/api/users`, { credentials: "include" });
-        const usersData: UserOption[] = resUsers.ok ? (await resUsers.json()) : [];
+        const usersRaw = await safeFetchJson(`${API_BASE}/api/users`, { credentials: "include" });
+        const invitesRaw = await safeFetchJson(`${API_BASE}/api/invitations/pending`, { credentials: "include" });
 
-        // Fetch pending invitations
-        const resInvites = await fetch(`${API_BASE}/api/invitations/pending`, { credentials: "include" });
-        const invitesData: UserOption[] = resInvites.ok
-          ? (await resInvites.json() as Invite[]).map((i: Invite) => ({
+        const usersData: UserOption[] = Array.isArray(usersRaw) ? usersRaw : [];
+        const invitesData: UserOption[] = Array.isArray(invitesRaw)
+          ? (invitesRaw as Invite[]).map(i => ({
               ...i,
-              id: -i.id,       // negative ID to avoid collision
-              isPending: true, // mark pending
+              id: -i.id,
+              isPending: true,
             }))
           : [];
 
-        // Combine users and invites
-        const combined = [...usersData.filter(u => u.id !== userId), ...invitesData];
-        setUsers(combined);
-      } catch {
+        setUsers([...usersData.filter(u => u.id !== userId), ...invitesData]);
+      } catch (err) {
+        console.error("Error loading users/invites:", err);
         setUsers([]);
       }
     }
@@ -122,38 +133,32 @@ export default function ConversationList({ onSelect }: { onSelect: (id: number) 
   }, [search, users]);
 
   // =========================
-  // CREATE / OPEN DIRECT CHAT
+  // START DIRECT CHAT
   // =========================
   async function startDirectChat() {
-    if (!selectedUserId || selectedUserId < 0) return; // cannot start chat with pending
+    if (!selectedUserId || selectedUserId < 0) return;
 
-    try {
-      const res = await fetch(`${API_BASE}/api/conversations/direct`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ user_id: selectedUserId }),
-      });
+    const data = await safeFetchJson(`${API_BASE}/api/conversations/direct`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ user_id: selectedUserId }),
+    });
 
-      if (!res.ok) throw new Error("Failed to create conversation");
-      const { conversation_id } = await res.json();
-
-      // Refresh conversations
-      const convoRes = await fetch(`${API_BASE}/api/conversations`, { credentials: "include" });
-      const updated = await convoRes.json();
-      setConversations(updated);
-
-      setActiveId(conversation_id);
-      onSelect(conversation_id);
-
-      // Reset modal
-      setShowNewMessage(false);
-      setSelectedUserId(null);
-      setSearch("");
-    } catch (err) {
-      console.error(err);
-      alert("Could not start conversation");
+    if (!data || !data.conversation_id) {
+      alert("Could not start conversation — check backend response");
+      return;
     }
+
+    const updated = await safeFetchJson(`${API_BASE}/api/conversations`, { credentials: "include" });
+    if (updated && Array.isArray(updated)) setConversations(updated);
+
+    setActiveId(data.conversation_id);
+    onSelect(data.conversation_id);
+
+    setShowNewMessage(false);
+    setSelectedUserId(null);
+    setSearch("");
   }
 
   // =========================
@@ -161,7 +166,6 @@ export default function ConversationList({ onSelect }: { onSelect: (id: number) 
   // =========================
   return (
     <aside className="w-80 border-r bg-white flex flex-col">
-      {/* HEADER */}
       <div className="p-4 flex justify-between items-center border-b">
         <span className="text-lg font-semibold">💬 Messages</span>
         <button
@@ -172,7 +176,6 @@ export default function ConversationList({ onSelect }: { onSelect: (id: number) 
         </button>
       </div>
 
-      {/* NEW MESSAGE MODAL */}
       {showNewMessage && (
         <div className="p-4 border-b space-y-2">
           <input
@@ -208,26 +211,22 @@ export default function ConversationList({ onSelect }: { onSelect: (id: number) 
         </div>
       )}
 
-      {/* LOADING */}
       {loading && (
         <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
           Loading…
         </div>
       )}
 
-      {/* ERROR */}
       {error && (
         <div className="p-4 text-sm text-red-600 bg-red-50 border-b">{error}</div>
       )}
 
-      {/* EMPTY */}
       {!loading && !error && conversations.length === 0 && !showNewMessage && (
         <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
           No conversations yet
         </div>
       )}
 
-      {/* CONVERSATIONS */}
       <ul className="flex-1 overflow-y-auto divide-y">
         {conversations.map(c => {
           const isActive = c.id === activeId;
