@@ -18,16 +18,38 @@ def init_user_routes(app):
     def list_users():
         org_id = session.get("organization_id")
         user_id = session.get("user_id")
+        role = session.get("role")
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        c.execute("""
-            SELECT id, email, role
-            FROM users
-            WHERE organization_id = ?
-              AND id != ?
-        """, (org_id, user_id))
+        if role == "super_admin":
+            c.execute("""
+                SELECT id, email, role
+                FROM users
+                WHERE id != ?
+            """, (user_id,))
+        elif role == "admin":
+            c.execute("""
+                SELECT id, email, role
+                FROM users
+                WHERE (organization_id = ? OR role = 'admin')
+                  AND id != ?
+            """, (org_id, user_id))
+        elif role == "manager":
+            c.execute("""
+                SELECT id, email, role
+                FROM users
+                WHERE (organization_id = ? OR role = 'manager')
+                  AND id != ?
+            """, (org_id, user_id))
+        else:  # employee
+            c.execute("""
+                SELECT id, email, role
+                FROM users
+                WHERE organization_id = ?
+                  AND id != ?
+            """, (org_id, user_id))
 
         users = [
             {"id": u[0], "email": u[1], "role": u[2]}
