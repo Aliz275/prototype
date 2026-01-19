@@ -1,235 +1,187 @@
-// File: frontend/src/components/ConversationList.tsx
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
-// =========================
-// TYPES
-// =========================
+type Participant = {
+  id: number;
+  email: string;
+};
+
 type Conversation = {
   id: number;
   name: string | null;
   is_group_chat: number;
+  participants: Participant[];
 };
 
 type UserOption = {
   id: number;
   email: string;
-  role?: string;
-  isPending?: boolean; // mark pending invites
-};
-
-type Invite = {
-  id: number;
-  email: string;
-  role: string;
-  status: "pending" | "accepted";
 };
 
 const API_BASE = "http://localhost:8000";
 
-// =========================
-// SAFE FETCH JSON HELPER
-// =========================
-async function safeFetchJson(url: string, options?: RequestInit): Promise<any | null> {
+async function safeFetchJson(url: string, options?: RequestInit) {
   try {
     const res = await fetch(url, options);
     const text = await res.text();
-    try {
-      return JSON.parse(text);
-    } catch {
-      console.error(`Invalid JSON from ${url}:`, text);
-      return null;
-    }
-  } catch (err) {
-    console.error(`Fetch error for ${url}:`, err);
+    return JSON.parse(text);
+  } catch {
     return null;
   }
 }
 
-// =========================
-// COMPONENT
-// =========================
-export default function ConversationList({ onSelect }: { onSelect: (id: number) => void }) {
+export default function ConversationList({
+  onSelect,
+}: {
+  onSelect: (id: number) => void;
+}) {
   const { user } = useAuth();
+
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
-  const [showNewMessage, setShowNewMessage] = useState(false);
+  const [showNew, setShowNew] = useState(false);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
 
-  // =========================
-  // LOAD CONVERSATIONS
-  // =========================
+  /* ================= LOAD CONVERSATIONS ================= */
   useEffect(() => {
     if (!user) return;
 
-    async function loadConversations() {
-      setLoading(true);
-      setError("");
-
-      const data = await safeFetchJson(`${API_BASE}/api/conversations`, { credentials: "include" });
-      if (data && Array.isArray(data)) {
-        setConversations(data);
-        if (data.length > 0) {
-          setActiveId(data[0].id);
-          onSelect(data[0].id);
-        }
-      } else {
-        setError("Failed to load conversations — check backend response or rate limit");
-        setConversations([]);
+    safeFetchJson(`${API_BASE}/api/conversations`, {
+      credentials: "include",
+    }).then(data => {
+      if (Array.isArray(data)) {
+        setConversations(
+          data.map(c => ({
+            ...c,
+            participants: c.participants ?? [],
+          }))
+        );
       }
-
-      setLoading(false);
-    }
-
-    loadConversations();
-  }, [user, onSelect]);
-
-  // =========================
-  // LOAD USERS + PENDING INVITES
-  // =========================
-  useEffect(() => {
-    if (!user) return;
-
-    async function loadUsersAndInvites() {
-      try {
-        const userId = user!.id;
-
-        const usersRaw = await safeFetchJson(`${API_BASE}/api/users`, { credentials: "include" });
-        const invitesRaw = await safeFetchJson(`${API_BASE}/api/invitations/pending`, { credentials: "include" });
-
-        const usersData: UserOption[] = Array.isArray(usersRaw) ? usersRaw : [];
-        const invitesData: UserOption[] = Array.isArray(invitesRaw)
-          ? (invitesRaw as Invite[]).map(i => ({
-              ...i,
-              id: -i.id,
-              isPending: true,
-            }))
-          : [];
-
-        setUsers([...usersData.filter(u => u.id !== userId), ...invitesData]);
-      } catch (err) {
-        console.error("Error loading users/invites:", err);
-        setUsers([]);
-      }
-    }
-
-    loadUsersAndInvites();
+    });
   }, [user]);
 
-  // =========================
-  // SEARCH FILTER
-  // =========================
-  const filteredUsers = useMemo(() => {
-    if (!search.trim()) return users;
-    return users.filter(u => u.email.toLowerCase().includes(search.toLowerCase()));
-  }, [search, users]);
+  /* ================= LOAD USERS ================= */
+  useEffect(() => {
+    if (!user) return;
 
-  // =========================
-  // START DIRECT CHAT
-  // =========================
-  async function startDirectChat() {
-    if (!selectedUserId || selectedUserId < 0) return;
-
-    const data = await safeFetchJson(`${API_BASE}/api/conversations/direct`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+    safeFetchJson(`${API_BASE}/api/users`, {
       credentials: "include",
-      body: JSON.stringify({ user_id: selectedUserId }),
+    }).then(data => {
+      if (Array.isArray(data)) {
+        setUsers(data.filter(u => u.id !== user.id));
+      }
     });
+  }, [user]);
 
-    if (!data || !data.conversation_id) {
-      alert("Could not start conversation — check backend response");
-      return;
+  /* ================= START CHAT ================= */
+  async function startChat() {
+    if (!selectedUserId || !user) return;
+
+    const otherUser = users.find(u => u.id === selectedUserId);
+    if (!otherUser) return;
+
+    const data = await safeFetchJson(
+      `${API_BASE}/api/conversations/direct`,
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: selectedUserId }),
+      }
+    );
+
+    if (!data?.conversation_id) return;
+
+    // 🔥 FORCE participants so name NEVER becomes "Direct Message"
+    const newConversation: Conversation = {
+      id: data.conversation_id,
+      name: null,
+      is_group_chat: 0,
+      participants: [
+        { id: user.id, email: user.email },
+        { id: otherUser.id, email: otherUser.email },
+      ],
+    };
+
+    if (!conversations.find(c => c.id === newConversation.id)) {
+      setConversations(prev => [...prev, newConversation]);
     }
 
-    const updated = await safeFetchJson(`${API_BASE}/api/conversations`, { credentials: "include" });
-    if (updated && Array.isArray(updated)) setConversations(updated);
+    setActiveId(newConversation.id);
+    onSelect(newConversation.id);
 
-    setActiveId(data.conversation_id);
-    onSelect(data.conversation_id);
-
-    setShowNewMessage(false);
+    setShowNew(false);
     setSelectedUserId(null);
     setSearch("");
   }
 
-  // =========================
-  // RENDER
-  // =========================
+  /* ================= DISPLAY NAME ================= */
+  function getConversationName(c: Conversation) {
+    if (c.name) return c.name;
+
+    const other = c.participants.find(p => p.email !== user?.email);
+    return other?.email ?? "Direct Message";
+  }
+
+  const filteredUsers = useMemo(() => {
+    if (!search) return users;
+    return users.filter(u =>
+      u.email.toLowerCase().includes(search.toLowerCase())
+    );
+  }, [search, users]);
+
   return (
     <aside className="w-80 border-r bg-white flex flex-col">
       <div className="p-4 flex justify-between items-center border-b">
-        <span className="text-lg font-semibold">💬 Messages</span>
+        <span className="font-semibold">💬 Messages</span>
         <button
-          onClick={() => setShowNewMessage(v => !v)}
-          className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700"
+          onClick={() => setShowNew(v => !v)}
+          className="bg-blue-600 text-white px-3 py-1 rounded text-sm"
         >
           New
         </button>
       </div>
 
-      {showNewMessage && (
+      {showNew && (
         <div className="p-4 border-b space-y-2">
           <input
-            type="text"
             placeholder="Search users..."
+            className="w-full border rounded p-2 text-sm"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full border rounded p-2 text-sm"
           />
 
           <select
+            className="w-full border rounded p-2 text-sm"
             value={selectedUserId ?? ""}
             onChange={e => setSelectedUserId(Number(e.target.value))}
-            className="w-full border rounded p-2 text-sm"
           >
-            <option value="">Select user…</option>
+            <option value="">Select user</option>
             {filteredUsers.map(u => (
               <option key={u.id} value={u.id}>
-                {u.email} {u.isPending ? "(Pending)" : ""}
+                {u.email}
               </option>
             ))}
           </select>
 
           <button
-            disabled={!selectedUserId || selectedUserId < 0}
-            onClick={startDirectChat}
-            className={`w-full text-sm py-2 rounded text-white ${
-              selectedUserId && selectedUserId > 0 ? "bg-green-600 hover:bg-green-700" : "bg-gray-400 cursor-not-allowed"
-            }`}
+            onClick={startChat}
+            disabled={!selectedUserId}
+            className="w-full bg-green-600 text-white rounded py-2 text-sm disabled:bg-gray-400"
           >
             Start Chat
           </button>
         </div>
       )}
 
-      {loading && (
-        <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
-          Loading…
-        </div>
-      )}
-
-      {error && (
-        <div className="p-4 text-sm text-red-600 bg-red-50 border-b">{error}</div>
-      )}
-
-      {!loading && !error && conversations.length === 0 && !showNewMessage && (
-        <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
-          No conversations yet
-        </div>
-      )}
-
       <ul className="flex-1 overflow-y-auto divide-y">
         {conversations.map(c => {
-          const isActive = c.id === activeId;
+          const name = getConversationName(c);
           return (
             <li
               key={c.id}
@@ -238,14 +190,14 @@ export default function ConversationList({ onSelect }: { onSelect: (id: number) 
                 onSelect(c.id);
               }}
               className={`p-4 cursor-pointer flex gap-3 ${
-                isActive ? "bg-blue-50" : "hover:bg-gray-50"
+                activeId === c.id ? "bg-blue-50" : "hover:bg-gray-50"
               }`}
             >
               <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold">
-                {(c.name || "D")[0]}
+                {name[0]?.toUpperCase()}
               </div>
-              <div className="flex-1">
-                <div className="font-medium truncate">{c.name || "Direct Message"}</div>
+              <div>
+                <div className="font-medium truncate">{name}</div>
                 <div className="text-xs text-gray-500">Click to open</div>
               </div>
             </li>
