@@ -1,91 +1,122 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import ConversationList from "../../components/ConversationList";
+import ChatWindow from "../../components/ChatWindow";
 import { useAuth } from "../../context/AuthContext";
 
-type Conversation = {
+type Invite = {
   id: number;
-  name: string | null;
-  is_group_chat: number;
+  email: string;
+  role: string;
+  status: "pending" | "accepted";
 };
 
 const API_BASE = "http://localhost:8000";
 
-export default function ConversationList({
-  onSelect,
-}: {
-  onSelect: (id: number) => void;
-}) {
+export default function MessagesPage() {
   const { user } = useAuth();
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
+  const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
+  const [selectedInvite, setSelectedInvite] = useState<Invite | null>(null);
+  const [invites, setInvites] = useState<Invite[]>([]);
+
+  // Load invited users (pending)
   useEffect(() => {
     if (!user) return;
 
-    async function loadConversations() {
-      try {
-        setLoading(true);
-        setError("");
-
-        const res = await fetch(`${API_BASE}/api/conversations`, {
-          credentials: "include",
-        });
-
-        if (res.status === 401 || res.status === 403 ) {
-          setError("You are not authorized. Please login again.");
-          setConversations([]);
-          return;
-        }
-
-        if (!res.ok) {
-          throw new Error(`Server error: ${res.status}`);
-        }
-
-        const data = await res.json();
-
+    fetch(`${API_BASE}/api/invitations`, {
+      credentials: "include",
+    })
+      .then(res => res.json())
+      .then(data => {
         if (Array.isArray(data)) {
-          setConversations(data);
-        } else {
-          console.warn("Unexpected conversations payload:", data);
-          setConversations([]);
+          setInvites(data.filter(i => i.status === "pending"));
         }
-      } catch (err: any) {
-        console.error("Error loading conversations:", err);
-        setError(err.message || "Failed to load conversations");
-        setConversations([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadConversations();
+      })
+      .catch(() => setInvites([]));
   }, [user]);
 
   return (
-    <aside className="w-72 border-r bg-white flex flex-col">
-      <div className="p-4 font-semibold border-b">Messages</div>
+    <div className="flex h-screen bg-gray-100">
+      {/* LEFT PANEL */}
+      <aside className="w-80 bg-white border-r flex flex-col">
+        {/* Conversations */}
+        <ConversationList
+          onSelect={(id) => {
+            setSelectedInvite(null);
+            setActiveConversationId(id);
+          }}
+        />
 
-      {loading && <div className="p-4 text-sm text-gray-500">Loading…</div>}
+        {/* Pending Invites */}
+        <div className="border-t">
+          <div className="p-3 text-xs font-semibold text-gray-500 uppercase">
+            Pending Invites
+          </div>
 
-      {error && <div className="p-4 text-sm text-red-600">{error}</div>}
+          {invites.length === 0 && (
+            <div className="px-4 pb-4 text-sm text-gray-400">
+              No pending invitations
+            </div>
+          )}
 
-      {!loading && !error && conversations.length === 0 && (
-        <div className="p-4 text-sm text-gray-500">No conversations yet</div>
-      )}
+          <ul>
+            {invites.map(invite => (
+              <li
+                key={invite.id}
+                onClick={() => {
+                  setActiveConversationId(null);
+                  setSelectedInvite(invite);
+                }}
+                className="px-4 py-3 cursor-pointer hover:bg-gray-50 flex items-center gap-3"
+              >
+                <div className="w-9 h-9 rounded-full bg-gray-300 text-gray-700 flex items-center justify-center font-semibold">
+                  {invite.email[0].toUpperCase()}
+                </div>
 
-      <ul className="flex-1 overflow-y-auto">
-        {conversations.map((c) => (
-          <li
-            key={c.id}
-            onClick={() => onSelect(c.id)}
-            className="p-3 hover:bg-gray-100 cursor-pointer border-b"
-          >
-            {c.name || "Direct Message"}
-          </li>
-        ))}
-      </ul>
-    </aside>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">
+                    {invite.email}
+                  </div>
+                  <div className="text-xs text-orange-500">
+                    Invitation pending
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </aside>
+
+      {/* RIGHT PANEL */}
+      <main className="flex-1 flex flex-col">
+        {/* Active conversation */}
+        {activeConversationId && (
+          <ChatWindow conversationId={activeConversationId} />
+        )}
+
+        {/* Pending invite selected */}
+        {selectedInvite && (
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+            <div className="text-2xl mb-2">⏳</div>
+            <h2 className="text-lg font-semibold mb-1">
+              Invitation not accepted yet
+            </h2>
+            <p className="text-sm text-gray-500 max-w-md">
+              {selectedInvite.email} has been invited but hasn’t created an account yet.
+              Messaging will be enabled once they accept the invitation.
+            </p>
+          </div>
+        )}
+
+        {/* Nothing selected */}
+        {!activeConversationId && !selectedInvite && (
+          <div className="flex-1 flex items-center justify-center text-gray-500 text-lg">
+            Select a conversation or invited user
+          </div>
+        )}
+      </main>
+    </div>
   );
 }
