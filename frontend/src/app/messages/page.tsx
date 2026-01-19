@@ -35,6 +35,7 @@ function MessagesPage() {
   const [activeConversation, setActiveConversation] =
     useState<Conversation | null>(null);
 
+  // Load pending invites
   useEffect(() => {
     fetch(`${API_BASE}/api/conversations`, {
       credentials: "include",
@@ -66,9 +67,54 @@ function MessagesPage() {
 
   return (
     <div className="flex h-screen bg-gray-100">
+<<<<<<< Updated upstream
       <ConversationList onSelect={handleSelectConversation} />
+=======
+      {/* LEFT PANEL */}
+      <aside className="w-80 bg-white border-r flex flex-col">
+        <ConversationList
+          onSelect={id => {
+            setSelectedInvite(null);
+            setActiveConversationId(id);
+          }}
+        />
+
+        {/* Pending Invites */}
+        <div className="border-t">
+          <div className="p-3 text-xs font-semibold text-gray-500 uppercase">
+            Pending Invites
+          </div>
+
+          {invites.length === 0 ? (
+            <div className="px-4 pb-4 text-sm text-gray-400">No pending invitations</div>
+          ) : (
+            <ul>
+              {invites.map(invite => (
+                <li
+                  key={invite.id}
+                  onClick={() => {
+                    setActiveConversationId(null);
+                    setSelectedInvite(invite);
+                  }}
+                  className="px-4 py-3 cursor-pointer hover:bg-gray-50 flex items-center gap-3"
+                >
+                  <div className="w-9 h-9 rounded-full bg-gray-300 text-gray-700 flex items-center justify-center font-semibold">
+                    {invite.email[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{invite.email}</div>
+                    <div className="text-xs text-orange-500">Invitation pending</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </aside>
+>>>>>>> Stashed changes
 
       <main className="flex-1 flex flex-col">
+<<<<<<< Updated upstream
         {activeConversation && user ? (
           <ChatWindow
             key={activeConversation.id}
@@ -79,6 +125,29 @@ function MessagesPage() {
         ) : (
           <div className="flex-1 flex items-center justify-center text-gray-500">
             Select a conversation
+=======
+        {activeConversationId && (
+          <ChatWindow
+            key={activeConversationId} // ⚡ force remount when conversation changes
+            conversationId={activeConversationId}
+          />
+        )}
+
+        {selectedInvite && (
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+            <div className="text-2xl mb-2">⏳</div>
+            <h2 className="text-lg font-semibold mb-1">Invitation not accepted yet</h2>
+            <p className="text-sm text-gray-500 max-w-md">
+              {selectedInvite.email} has been invited but hasn’t created an account yet.
+              Messaging will be enabled once they accept the invitation.
+            </p>
+          </div>
+        )}
+
+        {!activeConversationId && !selectedInvite && (
+          <div className="flex-1 flex items-center justify-center text-gray-500 text-lg">
+            Select a conversation or invited user
+>>>>>>> Stashed changes
           </div>
         )}
       </main>
