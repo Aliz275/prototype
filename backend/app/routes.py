@@ -7,9 +7,8 @@ from datetime import datetime
 from marshmallow import ValidationError
 from .schemas import SignupSchema, LoginSchema, EmployeeSchema
 
-def init_routes(app, limiter):
+def init_routes(app):
     @app.route('/api/signup', methods=['POST'])
-    @limiter.limit("10 per minute")
     def signup():
         try:
             # Validate request data
@@ -55,7 +54,6 @@ def init_routes(app, limiter):
             return jsonify({'message': 'Email already exists'}), 400
 
     @app.route('/api/login', methods=['POST'])
-    @limiter.limit("10 per minute")
     def login():
         try:
             # Validate request data

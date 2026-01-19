@@ -38,11 +38,12 @@ def get_user_id():
 
 # Initialize Rate Limiter
 # Rate limits are applied to selected routes in app/routes.py
-limiter = Limiter(
-    key_func=get_user_id,
-    app=app,
-    default_limits=["200 per day", "50 per hour"]
-)
+limiter = None
+# limiter = Limiter(
+#     key_func=get_user_id,
+#     app=app,
+#     default_limits=["200 per day", "50 per hour"]
+# )
 
 # Initialize SocketIO
 socketio = SocketIO(
@@ -53,7 +54,7 @@ socketio = SocketIO(
 )
 
 # Initialize routes
-init_routes(app, limiter)
+init_routes(app)
 init_org_routes(app)
 init_assignment_routes(app)
 init_messaging_routes(app, socketio)
