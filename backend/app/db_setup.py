@@ -1,3 +1,5 @@
+#backend/app/db_setup.py
+
 import sqlite3
 import os
 
@@ -95,6 +97,22 @@ def initialize_database():
         FOREIGN KEY (employee_id) REFERENCES users (id),
         FOREIGN KEY (graded_by) REFERENCES users (id)
     )''')
+
+    # --- Invitations ---
+    c.execute('''
+    CREATE TABLE IF NOT EXISTS invitations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL,
+    organization_id INTEGER NOT NULL,
+    created_by INTEGER,
+    expires_at TIMESTAMP NOT NULL,
+    is_used INTEGER DEFAULT 0,
+    FOREIGN KEY (organization_id) REFERENCES organizations (id),
+    FOREIGN KEY (created_by) REFERENCES users (id)
+)
+''')
 
     # --- Messaging Tables ---
     c.execute('''CREATE TABLE IF NOT EXISTS conversations (

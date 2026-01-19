@@ -1,3 +1,5 @@
+// File: frontend/src/app/messages/page.tsx
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -21,22 +23,30 @@ export default function MessagesPage() {
   const [selectedInvite, setSelectedInvite] = useState<Invite | null>(null);
   const [invites, setInvites] = useState<Invite[]>([]);
 
-  // Load invited users (pending)
+  // =========================
+  // LOAD INVITED USERS (PENDING)
+  // =========================
   useEffect(() => {
     if (!user) return;
 
-    fetch(`${API_BASE}/api/invitations`, {
-      credentials: "include",
-    })
-      .then(res => res.json())
-      .then(data => {
+    async function loadInvites() {
+      try {
+        const res = await fetch(`${API_BASE}/api/invitations`, { credentials: "include" });
+        const data = await res.json();
         if (Array.isArray(data)) {
           setInvites(data.filter(i => i.status === "pending"));
         }
-      })
-      .catch(() => setInvites([]));
+      } catch {
+        setInvites([]);
+      }
+    }
+
+    loadInvites();
   }, [user]);
 
+  // =========================
+  // RENDER
+  // =========================
   return (
     <div className="flex h-screen bg-gray-100">
       {/* LEFT PANEL */}
