@@ -5,7 +5,6 @@ from flask_socketio import emit, join_room, leave_room
 from app.auth import role_required
 import sqlite3
 import os
-from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "database.db")
 
@@ -13,7 +12,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "..", "database.db")
 def init_messaging_routes(app, socketio):
 
     # =========================
-    # CREATE CONVERSATION
+    # CREATE CONVERSATION (GROUP / GENERIC)
     # =========================
     @app.route("/api/conversations", methods=["POST"])
     @role_required(["employee", "manager", "admin", "super_admin"])
@@ -30,7 +29,7 @@ def init_messaging_routes(app, socketio):
         participant_ids = list(set(participant_ids))
         is_group_chat = len(participant_ids) > 2
 
-        if is_group_chat and role not in ["manager", "admin"]:
+        if is_group_chat and role not in ["manager", "admin", "super_admin"]:
             return jsonify({"message": "Only managers/admins can create group chats"}), 403
 
         name = data.get("name") if is_group_chat else None
@@ -55,37 +54,61 @@ def init_messaging_routes(app, socketio):
 
         return jsonify({"conversation_id": conversation_id}), 201
 
-
     # =========================
-    # GET USER CONVERSATIONS
+    # GET USER CONVERSATIONS (FIXED)
     # =========================
     @app.route("/api/conversations", methods=["GET"])
     @role_required(["employee", "manager", "admin", "super_admin"])
     def get_conversations():
         user_id = session.get("user_id")
-
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
         c.execute("""
-            SELECT c.id, c.name, c.is_group_chat
+            SELECT DISTINCT c.id, c.name, c.is_group_chat
             FROM conversations c
             JOIN conversation_participants cp ON c.id = cp.conversation_id
             WHERE cp.user_id = ?
             ORDER BY c.id DESC
         """, (user_id,))
 
-        rows = c.fetchall()
+        conversations = []
+
+        for convo_id, name, is_group in c.fetchall():
+
+            # Fetch participants
+            c.execute("""
+                SELECT u.id, u.email
+                FROM conversation_participants cp
+                JOIN users u ON u.id = cp.user_id
+                WHERE cp.conversation_id = ?
+            """, (convo_id,))
+
+            participants = [
+                {"id": u[0], "email": u[1]}
+                for u in c.fetchall()
+            ]
+
+            # ✅ FIX: Provide display name for direct chats
+            display_name = name
+            if not is_group:
+                for p in participants:
+                    if p["id"] != user_id:
+                        display_name = p["email"]
+                        break
+
+            conversations.append({
+                "id": convo_id,
+                "name": display_name,
+                "is_group_chat": bool(is_group),
+                "participants": participants
+            })
+
         conn.close()
-
-        return jsonify([
-            {"id": r[0], "name": r[1], "is_group_chat": r[2]}
-            for r in rows
-        ]), 200
-
+        return jsonify(conversations), 200
 
     # =========================
-    # CREATE DIRECT CHAT
+    # CREATE DIRECT CHAT (FIXED)
     # =========================
     @app.route("/api/conversations/direct", methods=["POST"])
     @role_required(["employee", "manager", "admin", "super_admin"])
@@ -96,7 +119,7 @@ def init_messaging_routes(app, socketio):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        # Check existing direct conversation
+        # Check if conversation already exists
         c.execute("""
             SELECT c.id
             FROM conversations c
@@ -112,7 +135,7 @@ def init_messaging_routes(app, socketio):
             conn.close()
             return jsonify({"conversation_id": row[0]}), 200
 
-        # Create new conversation
+        # Create new direct conversation
         c.execute(
             "INSERT INTO conversations (is_group_chat, created_by_id) VALUES (0, ?)",
             (user_id,),
@@ -132,7 +155,6 @@ def init_messaging_routes(app, socketio):
         conn.close()
 
         return jsonify({"conversation_id": convo_id}), 201
-
 
     # =========================
     # GET MESSAGES
@@ -158,23 +180,19 @@ def init_messaging_routes(app, socketio):
             SELECT m.id, m.content, m.created_at, u.email
             FROM messages m
             JOIN users u ON m.sender_id = u.id
-            WHERE m.conversation_id = ? AND m.is_deleted = 0
+            WHERE m.conversation_id = ?
             ORDER BY m.created_at ASC
         """, (conversation_id,))
 
-        rows = c.fetchall()
+        messages = [{
+            "id": r[0],
+            "content": r[1],
+            "created_at": r[2],
+            "sender_email": r[3]
+        } for r in c.fetchall()]
+
         conn.close()
-
-        return jsonify([
-            {
-                "id": r[0],
-                "content": r[1],
-                "created_at": r[2],
-                "sender_email": r[3]
-            }
-            for r in rows
-        ]), 200
-
+        return jsonify(messages), 200
 
     # =========================
     # SEND MESSAGE
@@ -232,7 +250,6 @@ def init_messaging_routes(app, socketio):
 
         return jsonify({"message_id": message_id}), 201
 
-
     # =========================
     # SOCKET EVENTS
     # =========================
@@ -247,17 +264,16 @@ def init_messaging_routes(app, socketio):
     @socketio.on("connect")
     def on_connect():
         if session.get("user_id"):
-            emit(
-                "user_status",
-                {"user_id": session["user_id"], "status": "online"},
-                broadcast=True,
-            )
+            emit("user_status", {
+                "user_id": session["user_id"],
+                "status": "online"
+            }, broadcast=True)
 
     @socketio.on("disconnect")
     def on_disconnect():
         if session.get("user_id"):
-            emit(
-                "user_status",
-                {"user_id": session["user_id"], "status": "offline"},
-                broadcast=True,
-            )
+            emit("user_status", {
+                "user_id": session["user_id"],
+                "status": "offline"
+            }, broadcast=True)
+

@@ -1,3 +1,5 @@
+//frontend/src/components/ConversationList.tsx
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -33,37 +35,22 @@ async function safeFetchJson(url: string, options?: RequestInit) {
 }
 
 export default function ConversationList({
+  conversations,
+  activeConversationId,
   onSelect,
+  onConversationCreated,
 }: {
+  conversations: Conversation[];
+  activeConversationId: number | null;
   onSelect: (id: number) => void;
+  onConversationCreated: (c: Conversation) => void;
 }) {
   const { user } = useAuth();
-
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeId, setActiveId] = useState<number | null>(null);
 
   const [showNew, setShowNew] = useState(false);
   const [users, setUsers] = useState<UserOption[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
-
-  /* ================= LOAD CONVERSATIONS ================= */
-  useEffect(() => {
-    if (!user) return;
-
-    safeFetchJson(`${API_BASE}/api/conversations`, {
-      credentials: "include",
-    }).then(data => {
-      if (Array.isArray(data)) {
-        setConversations(
-          data.map(c => ({
-            ...c,
-            participants: c.participants ?? [],
-          }))
-        );
-      }
-    });
-  }, [user]);
 
   /* ================= LOAD USERS ================= */
   useEffect(() => {
@@ -97,7 +84,6 @@ export default function ConversationList({
 
     if (!data?.conversation_id) return;
 
-    // 🔥 FORCE participants so name NEVER becomes "Direct Message"
     const newConversation: Conversation = {
       id: data.conversation_id,
       name: null,
@@ -108,12 +94,7 @@ export default function ConversationList({
       ],
     };
 
-    if (!conversations.find(c => c.id === newConversation.id)) {
-      setConversations(prev => [...prev, newConversation]);
-    }
-
-    setActiveId(newConversation.id);
-    onSelect(newConversation.id);
+    onConversationCreated(newConversation);
 
     setShowNew(false);
     setSelectedUserId(null);
@@ -123,7 +104,6 @@ export default function ConversationList({
   /* ================= DISPLAY NAME ================= */
   function getConversationName(c: Conversation) {
     if (c.name) return c.name;
-
     const other = c.participants.find(p => p.email !== user?.email);
     return other?.email ?? "Direct Message";
   }
@@ -182,15 +162,14 @@ export default function ConversationList({
       <ul className="flex-1 overflow-y-auto divide-y">
         {conversations.map(c => {
           const name = getConversationName(c);
+          const active = activeConversationId === c.id;
+
           return (
             <li
               key={c.id}
-              onClick={() => {
-                setActiveId(c.id);
-                onSelect(c.id);
-              }}
+              onClick={() => onSelect(c.id)}
               className={`p-4 cursor-pointer flex gap-3 ${
-                activeId === c.id ? "bg-blue-50" : "hover:bg-gray-50"
+                active ? "bg-blue-50" : "hover:bg-gray-50"
               }`}
             >
               <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold">
