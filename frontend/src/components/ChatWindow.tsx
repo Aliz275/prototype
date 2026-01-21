@@ -5,51 +5,54 @@
 import { useEffect, useRef, useState } from "react";
 import { useSocket } from "../context/SocketContext";
 import MessageInput from "./MessageInput";
+import { Conversation } from "../types/conversation";
 
 type Message = {
   id: number;
-  sender_id: number;
   sender_email: string;
   content: string;
   created_at: string;
 };
 
-type ChatWindowProps = {
-  conversationId: number;
-  conversationName?: string;
-  userId?: number; // current logged-in user
+type Participant = {
+  id: number;
+  email: string;
+  role: string;
 };
 
+const API_BASE = "http://localhost:8000";
+
 export default function ChatWindow({
-  conversationId,
-  conversationName,
-  userId,
-}: ChatWindowProps) {
+  conversation,
+  currentUser,
+  onDeleted,
+}: {
+  conversation: Conversation;
+  currentUser: { id: number; email: string; role: string };
+  onDeleted: () => void;
+}) {
   const socket = useSocket();
-  const [messages, setMessages] = useState<Message[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Fetch messages on conversation change
-  useEffect(() => {
-    async function loadMessages() {
-      try {
-        const res = await fetch(
-          `http://localhost:8000/api/conversations/${conversationId}/messages`,
-          { credentials: "include" }
-        );
-        const data: Message[] = await res.json();
-        setMessages(data || []);
-      } catch (err) {
-        console.error("Failed to load messages:", err);
-        setMessages([]);
-      }
-    }
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [showDetails, setShowDetails] = useState(false);
 
-    loadMessages();
+  const conversationId = conversation.id;
+  const isGroup = conversation.is_group_chat;
+  const isSuperAdmin = currentUser.role === "super_admin";
+
+  /* ================= LOAD MESSAGES ================= */
+  useEffect(() => {
+    fetch(`${API_BASE}/api/conversations/${conversationId}/messages`, {
+      credentials: "include",
+    })
+      .then(res => res.json())
+      .then(setMessages);
 
     socket.emit("join", { conversation_id: conversationId });
 
-    socket.on("new_message", (data: { conversation_id: number; message: Message }) => {
+    socket.on("new_message", (data: any) => {
       if (data.conversation_id === conversationId) {
         setMessages(prev => [...prev, data.message]);
       }
@@ -59,58 +62,135 @@ export default function ChatWindow({
       socket.emit("leave", { conversation_id: conversationId });
       socket.off("new_message");
     };
-  }, [conversationId]);
+  }, [conversationId, socket]);
 
-  // Scroll to bottom when messages change
+  /* ================= AUTO SCROLL ================= */
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Helper to check if message is from current user
-  const isOwn = (message: Message) => message.sender_id === userId;
+  /* ================= LOAD PARTICIPANTS (DETAILS) ================= */
+  useEffect(() => {
+    if (!showDetails) return;
+
+    fetch(`${API_BASE}/api/conversations/${conversationId}/participants`, {
+      credentials: "include",
+    })
+      .then(res => res.json())
+      .then(setParticipants);
+  }, [showDetails, conversationId]);
+
+  /* ================= DELETE / LEAVE ================= */
+  async function handleDeleteOrLeave() {
+    if (isSuperAdmin) {
+      // Super admin deletes conversation for everyone
+      await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+    } else {
+      // Others just leave
+      await fetch(`${API_BASE}/api/conversations/${conversationId}/leave`, {
+        method: "POST",
+        credentials: "include",
+      });
+    }
+
+    onDeleted();
+  }
+
+  const displayName = isGroup
+    ? conversation.name
+    : conversation.participants.find(p => p.email !== currentUser.email)?.email;
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
-      {/* Header */}
-      <div className="flex items-center gap-3 p-4 border-b bg-white shadow-sm">
-        <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-white font-bold">
-          {conversationName?.[0] ?? "?"}
-        </div>
-        <div className="flex-1 font-semibold">{conversationName || "Conversation"}</div>
-        <button className="text-sm text-blue-600 hover:underline">Details</button>
+      {/* HEADER */}
+      <div className="flex items-center justify-between p-4 border-b bg-white">
+        <div className="font-semibold truncate">{displayName}</div>
+
+        <button
+          onClick={() => setShowDetails(true)}
+          className="text-sm text-blue-600 hover:underline"
+        >
+          Details
+        </button>
       </div>
 
-      {/* Messages */}
+      {/* MESSAGES */}
       <div className="flex-1 overflow-y-auto p-4 space-y-2">
         {messages.map(msg => (
           <div
             key={msg.id}
-            className={`flex ${isOwn(msg) ? "justify-end" : "justify-start"}`}
+            className={`flex ${
+              msg.sender_email === currentUser.email
+                ? "justify-end"
+                : "justify-start"
+            }`}
           >
             <div
-              className={`max-w-xs px-3 py-2 rounded-lg break-words ${
-                isOwn(msg)
-                  ? "bg-blue-600 text-white rounded-br-none"
-                  : "bg-gray-200 text-gray-900 rounded-bl-none"
+              className={`max-w-xs rounded p-2 text-sm ${
+                msg.sender_email === currentUser.email
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-200"
               }`}
             >
-              {!isOwn(msg) && (
-                <div className="text-xs font-semibold mb-1">{msg.sender_email}</div>
-              )}
-              <div className="text-sm">{msg.content}</div>
-              <div className="text-xs text-gray-400 mt-1 text-right">
-                {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </div>
+              {msg.content}
             </div>
           </div>
         ))}
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
+      {/* INPUT */}
       <div className="border-t bg-white p-3">
         <MessageInput conversationId={conversationId} />
       </div>
+
+      {/* DETAILS MODAL */}
+      {showDetails && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+          <div className="bg-white w-96 rounded-lg p-4 space-y-4">
+            <h2 className="font-bold text-lg">Conversation Details</h2>
+
+            {isGroup && (
+              <>
+                <div className="font-semibold">Members</div>
+                <ul className="text-sm space-y-1">
+                  {participants.map(p => (
+                    <li key={p.id}>
+                      {p.email}
+                      <span className="text-xs text-gray-500 ml-2">
+                        ({p.role})
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+            <div className="flex justify-end gap-3 pt-4">
+              <button
+                onClick={() => setShowDetails(false)}
+                className="text-sm"
+              >
+                Close
+              </button>
+
+              <button
+                onClick={handleDeleteOrLeave}
+                className="text-red-600 font-semibold text-sm"
+              >
+                {isSuperAdmin
+                  ? "Delete Conversation"
+                  : isGroup
+                  ? "Leave Group"
+                  : "Delete Chat"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

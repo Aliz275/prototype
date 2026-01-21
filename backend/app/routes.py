@@ -7,11 +7,23 @@ from datetime import datetime
 from marshmallow import ValidationError
 from .schemas import SignupSchema, LoginSchema, EmployeeSchema
 
+DB_PATH = "database.db"
+
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def init_routes(app):
+
+    # =========================
+    # AUTH
+    # =========================
     @app.route('/api/signup', methods=['POST'])
     def signup():
         try:
-            # Validate request data
             data = SignupSchema().load(request.get_json())
         except ValidationError as err:
             return jsonify(err.messages), 400
@@ -19,127 +31,162 @@ def init_routes(app):
         password = data.get('password')
         token = data.get('token')
 
-        conn = sqlite3.connect('database.db')
+        conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT email, role, organization_id, expires_at, is_used FROM invitations WHERE token = ?', (token,))
+
+        c.execute(
+            '''
+            SELECT email, role, organization_id, expires_at, is_used
+            FROM invitations
+            WHERE token = ?
+            ''',
+            (token,)
+        )
         invitation = c.fetchone()
 
         if not invitation:
             conn.close()
             return jsonify({'message': 'Invalid token'}), 404
 
-        email, role, organization_id, expires_at, is_used = invitation
-        
-        if datetime.strptime(expires_at, '%Y-%m-%d %H:%M:%S.%f') < datetime.now():
+        if invitation['is_used']:
             conn.close()
-            return jsonify({'message': 'Token has expired'}), 400
-        
-        if is_used:
-            conn.close()
-            return jsonify({'message': 'Token has already been used'}), 400
+            return jsonify({'message': 'Token already used'}), 400
 
-        hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        if datetime.strptime(
+            invitation['expires_at'], '%Y-%m-%d %H:%M:%S.%f'
+        ) < datetime.now():
+            conn.close()
+            return jsonify({'message': 'Token expired'}), 400
+
+        hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
 
         try:
             c.execute(
-                'INSERT INTO users (email, password, organization_id, role) VALUES (?, ?, ?, ?)',
-                (email, hashed_password, organization_id, role)
+                '''
+                INSERT INTO users (email, password, role, organization_id)
+                VALUES (?, ?, ?, ?)
+                ''',
+                (
+                    invitation['email'],
+                    hashed_password,
+                    invitation['role'],
+                    invitation['organization_id']
+                )
             )
-            c.execute('UPDATE invitations SET is_used = 1 WHERE token = ?', (token,))
+            c.execute(
+                'UPDATE invitations SET is_used = 1 WHERE token = ?',
+                (token,)
+            )
             conn.commit()
             conn.close()
-            return jsonify({'message': 'Signup successful!'}), 201
+            return jsonify({'message': 'Signup successful'}), 201
         except sqlite3.IntegrityError:
             conn.close()
             return jsonify({'message': 'Email already exists'}), 400
 
+    # =========================
+    # LOGIN
+    # =========================
     @app.route('/api/login', methods=['POST'])
     def login():
         try:
-            # Validate request data
             data = LoginSchema().load(request.get_json())
         except ValidationError as err:
             return jsonify(err.messages), 400
 
-        email = data.get('email')
-        password = data.get('password')
-
-        conn = sqlite3.connect('database.db')
+        conn = get_db()
         c = conn.cursor()
-        c.execute('SELECT id, password, role, organization_id FROM users WHERE email = ?', (email,))
+        c.execute(
+            '''
+            SELECT id, email, password, role, organization_id
+            FROM users
+            WHERE email = ?
+            ''',
+            (data['email'],)
+        )
         user = c.fetchone()
         conn.close()
 
-        if not user:
-            return jsonify({'message': 'Invalid email or password'}), 401
+        if not user or not bcrypt.checkpw(
+            data['password'].encode(), user['password']
+        ):
+            return jsonify({'message': 'Invalid credentials'}), 401
 
-        user_id, hashed_password, role, organization_id = user
-
-        if not bcrypt.checkpw(password.encode('utf-8'), hashed_password):
-            return jsonify({'message': 'Invalid email or password'}), 401
-
-        # Save user info in session
-        session['user_id'] = user_id
-        session['email'] = email
-        session['role'] = role
-        session['organization_id'] = organization_id
-        session['is_admin'] = role in ['org_admin', 'super_admin']
+        session.update({
+            'user_id': user['id'],
+            'email': user['email'],
+            'role': user['role'],
+            'organization_id': user['organization_id'],
+            'is_admin': user['role'] in ['org_admin', 'super_admin']
+        })
 
         return jsonify({
-            'id': user_id,
-            'email': email,
-            'role': role,
-            'organization_id': organization_id
+            'id': user['id'],
+            'email': user['email'],
+            'role': user['role'],
+            'organization_id': user['organization_id']
         }), 200
 
+    # =========================
+    # CURRENT USER
+    # =========================
     @app.route('/api/user', methods=['GET'])
     def get_current_user():
-        if 'email' in session:
-            return jsonify({
-                'id': session.get('user_id'),
-                'email': session['email'],
-                'role': session.get('role'),
-                'organization_id': session.get('organization_id'),
-                'is_admin': session.get('is_admin', False)
-            })
-        else:
-            return jsonify({'email': None, 'is_admin': False})
+        if 'user_id' not in session:
+            return jsonify({'user': None}), 401
 
+        return jsonify({
+            'id': session['user_id'],
+            'email': session['email'],
+            'role': session['role'],
+            'organization_id': session['organization_id'],
+            'is_admin': session['is_admin']
+        })
+
+    # =========================
+    # EMPLOYEES (ADMIN ONLY)
+    # =========================
     @app.route('/api/employees', methods=['GET'])
     def get_employees():
-        conn = sqlite3.connect('database.db')
+        if not session.get('is_admin'):
+            return jsonify({'message': 'Admins only'}), 403
+
+        conn = get_db()
         c = conn.cursor()
         c.execute("SELECT * FROM employees")
-        employees = c.fetchall()
+        rows = c.fetchall()
         conn.close()
-        return jsonify(employees), 200
+
+        return jsonify([dict(r) for r in rows])
 
     @app.route('/api/employees', methods=['POST'])
     def add_employee():
         if not session.get('is_admin'):
-            return jsonify({'message': 'Unauthorized: Admins only'}), 403
+            return jsonify({'message': 'Admins only'}), 403
 
         try:
-            # Validate request data
             data = EmployeeSchema().load(request.get_json())
         except ValidationError as err:
             return jsonify(err.messages), 400
 
-        email = data.get('email')
-        first_name = data.get('first_name')
-        last_name = data.get('last_name')
-        position = data.get('position')
-        department = data.get('department')
-        phone = data.get('phone')
-
-        conn = sqlite3.connect('database.db')
+        conn = get_db()
         c = conn.cursor()
-        c.execute('''
-            INSERT INTO employees (first_name, last_name, email, position, department, phone)
+        c.execute(
+            '''
+            INSERT INTO employees
+            (first_name, last_name, email, position, department, phone)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', (first_name, last_name, email, position, department, phone))
-
+            ''',
+            (
+                data['first_name'],
+                data.get('last_name'),
+                data['email'],
+                data.get('position'),
+                data.get('department'),
+                data.get('phone')
+            )
+        )
         conn.commit()
         conn.close()
 
-        return jsonify({'message': 'Employee added successfully!'}), 201
+        return jsonify({'message': 'Employee added'}), 201

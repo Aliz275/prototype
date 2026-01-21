@@ -4,18 +4,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-
-type Participant = {
-  id: number;
-  email: string;
-};
-
-type Conversation = {
-  id: number;
-  name: string | null;
-  is_group_chat: number;
-  participants: Participant[];
-};
+import { Conversation } from "../types/conversation";
 
 type UserOption = {
   id: number;
@@ -42,15 +31,20 @@ export default function ConversationList({
 }: {
   conversations: Conversation[];
   activeConversationId: number | null;
-  onSelect: (id: number) => void;
+  onSelect: (id: number | null) => void;
   onConversationCreated: (c: Conversation) => void;
 }) {
   const { user } = useAuth();
 
-  const [showNew, setShowNew] = useState(false);
   const [users, setUsers] = useState<UserOption[]>([]);
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
   const [search, setSearch] = useState("");
+
+  const [showDirect, setShowDirect] = useState(false);
+  const [showGroup, setShowGroup] = useState(false);
+
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+  const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
+  const [groupName, setGroupName] = useState("");
 
   /* ================= LOAD USERS ================= */
   useEffect(() => {
@@ -65,12 +59,12 @@ export default function ConversationList({
     });
   }, [user]);
 
-  /* ================= START CHAT ================= */
-  async function startChat() {
-    if (!selectedUserId || !user) return;
+  /* ================= DIRECT CHAT ================= */
+  async function startDirectChat() {
+    if (!user || !selectedUserId) return;
 
-    const otherUser = users.find(u => u.id === selectedUserId);
-    if (!otherUser) return;
+    const other = users.find(u => u.id === selectedUserId);
+    if (!other) return;
 
     const data = await safeFetchJson(
       `${API_BASE}/api/conversations/direct`,
@@ -84,30 +78,61 @@ export default function ConversationList({
 
     if (!data?.conversation_id) return;
 
-    const newConversation: Conversation = {
+    onConversationCreated({
       id: data.conversation_id,
       name: null,
-      is_group_chat: 0,
+      is_group_chat: false,
       participants: [
         { id: user.id, email: user.email },
-        { id: otherUser.id, email: otherUser.email },
+        { id: other.id, email: other.email },
       ],
-    };
+    });
 
-    onConversationCreated(newConversation);
+    reset();
+  }
 
-    setShowNew(false);
+  /* ================= GROUP CHAT ================= */
+  async function createGroupChat() {
+    if (!user || user.role !== "super_admin") return;
+    if (!groupName || selectedUserIds.length === 0) return;
+
+    const data = await safeFetchJson(`${API_BASE}/api/conversations`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: groupName,
+        participant_ids: selectedUserIds,
+      }),
+    });
+
+    if (!data?.conversation_id) return;
+
+    const participants = users.filter(u =>
+      selectedUserIds.includes(u.id)
+    );
+    participants.push({ id: user.id, email: user.email });
+
+    onConversationCreated({
+      id: data.conversation_id,
+      name: groupName,
+      is_group_chat: true,
+      participants,
+    });
+
+    reset();
+  }
+
+  function reset() {
+    setShowDirect(false);
+    setShowGroup(false);
     setSelectedUserId(null);
+    setSelectedUserIds([]);
+    setGroupName("");
     setSearch("");
   }
 
-  /* ================= DISPLAY NAME ================= */
-  function getConversationName(c: Conversation) {
-    if (c.name) return c.name;
-    const other = c.participants.find(p => p.email !== user?.email);
-    return other?.email ?? "Direct Message";
-  }
-
+  /* ================= FILTER USERS ================= */
   const filteredUsers = useMemo(() => {
     if (!search) return users;
     return users.filter(u =>
@@ -115,20 +140,56 @@ export default function ConversationList({
     );
   }, [search, users]);
 
+  function getConversationName(c: Conversation) {
+    if (c.is_group_chat && c.name) return c.name;
+    const other = c.participants.find(p => p.email !== user?.email);
+    return other?.email ?? "Direct Message";
+  }
+
+  /* ================= RENDER ================= */
   return (
     <aside className="w-80 border-r bg-white flex flex-col">
       <div className="p-4 flex justify-between items-center border-b">
         <span className="font-semibold">💬 Messages</span>
-        <button
-          onClick={() => setShowNew(v => !v)}
-          className="bg-blue-600 text-white px-3 py-1 rounded text-sm"
-        >
-          New
-        </button>
+
+        <div className="flex gap-2">
+          {/* Direct message */}
+          <button
+            onClick={() => {
+              reset();
+              setShowDirect(true);
+            }}
+            className="bg-blue-600 text-white px-3 py-1 rounded text-sm"
+          >
+            New
+          </button>
+
+          {/* Group (super admin only) */}
+          {user?.role === "super_admin" && (
+            <button
+              onClick={() => {
+                reset();
+                setShowGroup(true);
+              }}
+              className="bg-purple-600 text-white px-3 py-1 rounded text-sm"
+            >
+              New Group
+            </button>
+          )}
+        </div>
       </div>
 
-      {showNew && (
+      {(showDirect || showGroup) && (
         <div className="p-4 border-b space-y-2">
+          {showGroup && (
+            <input
+              placeholder="Group name"
+              className="w-full border rounded p-2 text-sm"
+              value={groupName}
+              onChange={e => setGroupName(e.target.value)}
+            />
+          )}
+
           <input
             placeholder="Search users..."
             className="w-full border rounded p-2 text-sm"
@@ -136,26 +197,55 @@ export default function ConversationList({
             onChange={e => setSearch(e.target.value)}
           />
 
-          <select
-            className="w-full border rounded p-2 text-sm"
-            value={selectedUserId ?? ""}
-            onChange={e => setSelectedUserId(Number(e.target.value))}
-          >
-            <option value="">Select user</option>
+          {/* USER LIST */}
+          <div className="max-h-48 overflow-y-auto border rounded">
             {filteredUsers.map(u => (
-              <option key={u.id} value={u.id}>
-                {u.email}
-              </option>
+              <label
+                key={u.id}
+                className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer"
+              >
+                {showGroup ? (
+                  <input
+                    type="checkbox"
+                    checked={selectedUserIds.includes(u.id)}
+                    onChange={() =>
+                      setSelectedUserIds(prev =>
+                        prev.includes(u.id)
+                          ? prev.filter(x => x !== u.id)
+                          : [...prev, u.id]
+                      )
+                    }
+                  />
+                ) : (
+                  <input
+                    type="radio"
+                    name="direct-user"
+                    checked={selectedUserId === u.id}
+                    onChange={() => setSelectedUserId(u.id)}
+                  />
+                )}
+                <span className="text-sm">{u.email}</span>
+              </label>
             ))}
-          </select>
+          </div>
 
-          <button
-            onClick={startChat}
-            disabled={!selectedUserId}
-            className="w-full bg-green-600 text-white rounded py-2 text-sm disabled:bg-gray-400"
-          >
-            Start Chat
-          </button>
+          {showDirect ? (
+            <button
+              onClick={startDirectChat}
+              disabled={!selectedUserId}
+              className="w-full bg-green-600 text-white rounded py-2 text-sm disabled:bg-gray-400"
+            >
+              Start Chat
+            </button>
+          ) : (
+            <button
+              onClick={createGroupChat}
+              disabled={!groupName || selectedUserIds.length === 0}
+              className="w-full bg-purple-600 text-white rounded py-2 text-sm disabled:bg-gray-400"
+            >
+              Create Group
+            </button>
+          )}
         </div>
       )}
 
@@ -177,7 +267,9 @@ export default function ConversationList({
               </div>
               <div>
                 <div className="font-medium truncate">{name}</div>
-                <div className="text-xs text-gray-500">Click to open</div>
+                <div className="text-xs text-gray-500">
+                  {c.is_group_chat ? "Group chat" : "Direct message"}
+                </div>
               </div>
             </li>
           );

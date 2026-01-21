@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import ConversationList from "../../components/ConversationList";
 import ChatWindow from "../../components/ChatWindow";
 import { SocketProvider } from "../../context/SocketContext";
@@ -27,31 +27,44 @@ function MessagesPage() {
     useState<number | null>(null);
 
   /* ================= LOAD CONVERSATIONS ================= */
-  useEffect(() => {
+  const loadConversations = useCallback(async () => {
     if (!user) return;
 
-    fetch(`${API_BASE}/api/conversations`, {
-      credentials: "include",
-    })
-      .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setConversations(data);
-        }
+    try {
+      const res = await fetch(`${API_BASE}/api/conversations`, {
+        credentials: "include",
       });
+
+      if (!res.ok) {
+        console.error("Failed to load conversations:", res.status);
+        setConversations([]);
+        return;
+      }
+
+      const data = await res.json();
+
+      if (Array.isArray(data)) {
+        setConversations(data);
+      } else {
+        setConversations([]);
+      }
+    } catch (err) {
+      console.error("Fetch error:", err);
+      setConversations([]);
+    }
   }, [user]);
 
-  /* ================= GET NAME ================= */
-  function getConversationName(c: Conversation) {
-    if (c.name) return c.name;
-    if (!user || !Array.isArray(c.participants)) return "Direct Message";
-
-    const other = c.participants.find(p => p.email !== user.email);
-    return other?.email ?? "Direct Message";
-  }
+  useEffect(() => {
+    loadConversations();
+  }, [loadConversations]);
 
   const activeConversation =
     conversations.find(c => c.id === activeConversationId) ?? null;
+
+  function removeConversation(id: number) {
+    setConversations(prev => prev.filter(c => c.id !== id));
+    setActiveConversationId(null);
+  }
 
   return (
     <div className="flex h-screen bg-gray-100">
@@ -60,10 +73,9 @@ function MessagesPage() {
         activeConversationId={activeConversationId}
         onSelect={setActiveConversationId}
         onConversationCreated={conv => {
-          setConversations(prev => {
-            if (prev.find(c => c.id === conv.id)) return prev;
-            return [...prev, conv];
-          });
+          setConversations(prev =>
+            prev.some(c => c.id === conv.id) ? prev : [conv, ...prev]
+          );
           setActiveConversationId(conv.id);
         }}
       />
@@ -71,10 +83,9 @@ function MessagesPage() {
       <main className="flex-1 flex flex-col">
         {activeConversation && user ? (
           <ChatWindow
-            key={activeConversation.id}
-            conversationId={activeConversation.id}
-            conversationName={getConversationName(activeConversation)}
-            userId={user.id}
+            conversation={activeConversation}
+            currentUser={user}
+            onDeleted={() => removeConversation(activeConversation.id)}
           />
         ) : (
           <div className="flex-1 flex items-center justify-center text-gray-500 text-lg">
@@ -85,4 +96,3 @@ function MessagesPage() {
     </div>
   );
 }
-
