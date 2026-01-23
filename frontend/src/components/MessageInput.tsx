@@ -29,6 +29,7 @@ export default function MessageInput({ conversationId }: { conversationId: numbe
         onKeyDown={e => e.key === "Enter" && send()}
         className="flex-1 border rounded-full px-4 py-2 text-sm focus:outline-none focus:ring"
         placeholder="Type a message…"
+        spellCheck="true"
       />
       <button
         onClick={send}
