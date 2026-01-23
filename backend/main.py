@@ -9,7 +9,6 @@ from flask_talisman import Talisman
 import os
 
 from app.db_setup import initialize_database
-from app.db_migrations import apply_migrations
 from app.routes import init_routes
 from app.org_routes import init_org_routes
 from app.assignment_routes import init_assignment_routes
@@ -20,7 +19,6 @@ from app.invitation_routes import init_invitation_routes
 
 # Initialize the database first
 initialize_database()
-apply_migrations()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('FLASK_SECRET_KEY')
