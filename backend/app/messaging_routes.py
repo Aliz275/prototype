@@ -310,11 +310,11 @@ def init_messaging_routes(app, socketio):
     # =========================
     @socketio.on("join")
     def on_join(data):
-        join_room(f"conversation_{data['conversation_id']}")
+        join_room(f'conversation_{data["conversation_id"]}')
 
     @socketio.on("leave")
     def on_leave(data):
-        leave_room(f"conversation_{data['conversation_id']}")
+        leave_room(f'conversation_{data["conversation_id"]}')
 
     @socketio.on("mark_as_read")
     def on_mark_as_read(data):
@@ -346,4 +346,25 @@ def init_messaging_routes(app, socketio):
 
         conn.close()
 
-        emit("message_status_updated", {"message_id": message_id, "read_by": user_email}, room=f"conversation_{conversation_id}")
+        emit("message_status_updated", {"message_id": message_id, "read_by": user_email}, room=f'conversation_{conversation_id}')
+
+    @socketio.on("typing")
+    def on_typing(data):
+        conversation_id = data.get("conversation_id")
+        user_id = session.get("user_id")
+
+        if not all([conversation_id, user_id]):
+            return
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT email FROM users WHERE id = ?", (user_id,))
+        user_email = c.fetchone()[0]
+        conn.close()
+
+        emit("user_typing", {"user_email": user_email}, room=f"conversation_{conversation_id}", include_self=False)
+
+    @socketio.on("stop_typing")
+    def on_stop_typing(data):
+        conversation_id = data.get("conversation_id")
+        emit("user_stopped_typing", room=f"conversation_{conversation_id}", include_self=False)
