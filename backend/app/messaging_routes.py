@@ -1,5 +1,3 @@
-#backend/app/messaging_routes.py
-
 from flask import request, jsonify, session
 from flask_socketio import emit, join_room, leave_room
 from app.auth import role_required
@@ -225,7 +223,7 @@ def init_messaging_routes(app, socketio):
 
         c.execute(
             """
-            SELECT m.id, m.content, m.created_at, u.email
+            SELECT m.id, m.content, m.created_at, u.email as sender_email, m.status
             FROM messages m
             JOIN users u ON m.sender_id = u.id
             WHERE m.conversation_id = ?
@@ -233,16 +231,32 @@ def init_messaging_routes(app, socketio):
             """,
             (conversation_id,),
         )
+        messages_rows = c.fetchall()
 
-        messages = [
-            {
-                "id": r[0],
-                "content": r[1],
-                "created_at": r[2],
-                "sender_email": r[3],
-            }
-            for r in c.fetchall()
-        ]
+        messages = []
+        for row in messages_rows:
+            message_id = row[0]
+            c.execute(
+                """
+                SELECT u.email
+                FROM users u
+                JOIN message_read_status mrs ON u.id = mrs.user_id
+                WHERE mrs.message_id = ?
+                """,
+                (message_id,),
+            )
+            read_by_users = [r[0] for r in c.fetchall()]
+
+            messages.append(
+                {
+                    "id": message_id,
+                    "content": row[1],
+                    "created_at": row[2],
+                    "sender_email": row[3],
+                    "status": row[4],
+                    "read_by": read_by_users,
+                }
+            )
 
         conn.close()
         return jsonify(messages), 200
@@ -260,10 +274,7 @@ def init_messaging_routes(app, socketio):
         c = conn.cursor()
 
         c.execute(
-            """
-            INSERT INTO messages (conversation_id, sender_id, content)
-            VALUES (?, ?, ?)
-            """,
+            "INSERT INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)",
             (conversation_id, user_id, content),
         )
 
@@ -304,3 +315,35 @@ def init_messaging_routes(app, socketio):
     @socketio.on("leave")
     def on_leave(data):
         leave_room(f"conversation_{data['conversation_id']}")
+
+    @socketio.on("mark_as_read")
+    def on_mark_as_read(data):
+        conversation_id = data.get("conversation_id")
+        message_id = data.get("message_id")
+        user_id = session.get("user_id")
+
+        if not all([conversation_id, message_id, user_id]):
+            return
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        # Check if the user has already read this message
+        c.execute("SELECT 1 FROM message_read_status WHERE message_id = ? AND user_id = ?", (message_id, user_id))
+        if c.fetchone():
+            conn.close()
+            return
+
+        c.execute(
+            "INSERT INTO message_read_status (message_id, user_id) VALUES (?, ?)",
+            (message_id, user_id),
+        )
+        c.execute("UPDATE messages SET status = 'read' WHERE id = ?", (message_id,))
+        conn.commit()
+
+        c.execute("SELECT email FROM users WHERE id = ?", (user_id,))
+        user_email = c.fetchone()[0]
+
+        conn.close()
+
+        emit("message_status_updated", {"message_id": message_id, "read_by": user_email}, room=f"conversation_{conversation_id}")
