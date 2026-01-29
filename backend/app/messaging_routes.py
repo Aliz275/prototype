@@ -3,6 +3,7 @@ from flask_socketio import emit, join_room, leave_room
 from app.auth import role_required
 import sqlite3
 import os
+from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "database.db")
 
@@ -72,14 +73,14 @@ def init_messaging_routes(app, socketio):
 
         c.execute(
             """
-            SELECT DISTINCT c.id, c.name, c.is_group_chat
+            SELECT DISTINCT c.id, c.name, c.is_group_chat, um.unread_count
             FROM conversations c
-            JOIN conversation_participants cp
-              ON cp.conversation_id = c.id
+            JOIN conversation_participants cp ON cp.conversation_id = c.id
+            LEFT JOIN unread_messages um ON um.conversation_id = c.id AND um.user_id = ?
             WHERE cp.user_id = ?
-            ORDER BY c.id DESC
+            ORDER BY c.last_message_at DESC
             """,
-            (user_id,),
+            (user_id, user_id),
         )
 
         conversations = []
@@ -114,6 +115,7 @@ def init_messaging_routes(app, socketio):
                     "name": name,
                     "is_group_chat": bool(row["is_group_chat"]),
                     "participants": participants,
+                    "unread_count": row["unread_count"] or 0,
                 }
             )
 
@@ -277,8 +279,25 @@ def init_messaging_routes(app, socketio):
             "INSERT INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)",
             (conversation_id, user_id, content),
         )
-
         msg_id = c.lastrowid
+
+        c.execute(
+            "UPDATE conversations SET last_message_at = ? WHERE id = ?",
+            (datetime.utcnow(), conversation_id),
+        )
+
+        c.execute("SELECT user_id FROM conversation_participants WHERE conversation_id = ?", (conversation_id,))
+        participant_ids = [row[0] for row in c.fetchall() if row[0] != user_id]
+
+        for pid in participant_ids:
+            c.execute(
+                """
+                INSERT INTO unread_messages (user_id, conversation_id, unread_count)
+                VALUES (?, ?, 1)
+                ON CONFLICT(user_id, conversation_id) DO UPDATE SET unread_count = unread_count + 1
+                """,
+                (pid, conversation_id),
+            )
 
         c.execute("SELECT created_at FROM messages WHERE id = ?", (msg_id,))
         created_at = c.fetchone()[0]
@@ -347,6 +366,24 @@ def init_messaging_routes(app, socketio):
         conn.close()
 
         emit("message_status_updated", {"message_id": message_id, "read_by": user_email}, room=f'conversation_{conversation_id}')
+
+    @socketio.on("mark_conversation_as_read")
+    def on_mark_conversation_as_read(data):
+        conversation_id = data.get("conversation_id")
+        user_id = session.get("user_id")
+
+        if not all([conversation_id, user_id]):
+            return
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute(
+            "UPDATE unread_messages SET unread_count = 0 WHERE user_id = ? AND conversation_id = ?",
+            (user_id, conversation_id),
+        )
+        conn.commit()
+        conn.close()
+
 
     @socketio.on("typing")
     def on_typing(data):
