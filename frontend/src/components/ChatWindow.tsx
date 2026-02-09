@@ -37,18 +37,29 @@ export default function ChatWindow({
   const [messages, setMessages] = useState<Message[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [showDetails, setShowDetails] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const conversationId = conversation.id;
-  const isGroup = conversation.is_group_chat;
+  const isGroup = Boolean(conversation.is_group_chat);
   const isSuperAdmin = currentUser.role === "super_admin";
 
   /* ================= LOAD MESSAGES ================= */
   useEffect(() => {
-    fetch(`${API_BASE}/api/conversations/${conversationId}/messages`, {
-      credentials: "include",
-    })
-      .then(res => res.json())
-      .then(setMessages);
+    async function loadMessages() {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/conversations/${conversationId}/messages`,
+          { credentials: "include" }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        setMessages(data);
+      } catch {
+        // silent fail
+      }
+    }
+
+    loadMessages();
 
     socket.emit("join", { conversation_id: conversationId });
 
@@ -69,39 +80,66 @@ export default function ChatWindow({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  /* ================= LOAD PARTICIPANTS (DETAILS) ================= */
+  /* ================= LOAD PARTICIPANTS ================= */
   useEffect(() => {
     if (!showDetails) return;
 
-    fetch(`${API_BASE}/api/conversations/${conversationId}/participants`, {
-      credentials: "include",
-    })
-      .then(res => res.json())
-      .then(setParticipants);
+    async function loadParticipants() {
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/conversations/${conversationId}/participants`,
+          { credentials: "include" }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        setParticipants(data);
+      } catch {
+        // silent
+      }
+    }
+
+    loadParticipants();
   }, [showDetails, conversationId]);
 
   /* ================= DELETE / LEAVE ================= */
   async function handleDeleteOrLeave() {
-    if (isSuperAdmin) {
-      // Super admin deletes conversation for everyone
-      await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-    } else {
-      // Others just leave
-      await fetch(`${API_BASE}/api/conversations/${conversationId}/leave`, {
-        method: "POST",
-        credentials: "include",
-      });
-    }
+    const confirmMsg = isSuperAdmin
+      ? "Delete this conversation for everyone?"
+      : isGroup
+      ? "Leave this group?"
+      : "Delete this chat?";
 
-    onDeleted();
+    if (!confirm(confirmMsg)) return;
+
+    setLoading(true);
+
+    try {
+      const url = isSuperAdmin
+        ? `${API_BASE}/api/conversations/${conversationId}`
+        : `${API_BASE}/api/conversations/${conversationId}/leave`;
+
+      const method = isSuperAdmin ? "DELETE" : "POST";
+
+      const res = await fetch(url, {
+        method,
+        credentials: "include",
+      });
+
+      if (res.ok) {
+        onDeleted();
+      }
+    } catch {
+      // silent fail
+    } finally {
+      setLoading(false);
+    }
   }
 
   const displayName = isGroup
-    ? conversation.name
-    : conversation.participants.find(p => p.email !== currentUser.email)?.email;
+    ? conversation.name || "Group Chat"
+    : conversation.participants.find(
+        p => p.email !== currentUser.email
+      )?.email || "Direct Chat";
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -179,7 +217,8 @@ export default function ChatWindow({
 
               <button
                 onClick={handleDeleteOrLeave}
-                className="text-red-600 font-semibold text-sm"
+                disabled={loading}
+                className="text-red-600 font-semibold text-sm disabled:opacity-50"
               >
                 {isSuperAdmin
                   ? "Delete Conversation"
@@ -194,3 +233,4 @@ export default function ChatWindow({
     </div>
   );
 }
+

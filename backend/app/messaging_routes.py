@@ -11,7 +11,7 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "..", "database.db")
 def init_messaging_routes(app, socketio):
 
     # =========================
-    # CREATE CONVERSATION (DIRECT OR GROUP)
+    # CREATE CONVERSATION
     # =========================
     @app.route("/api/conversations", methods=["POST"])
     @role_required(["employee", "manager", "admin", "super_admin"])
@@ -37,20 +37,14 @@ def init_messaging_routes(app, socketio):
         c = conn.cursor()
 
         c.execute(
-            """
-            INSERT INTO conversations (name, is_group_chat, created_by_id)
-            VALUES (?, ?, ?)
-            """,
-            (name, int(is_group_chat), user_id),
+            "INSERT INTO conversations (name, is_group_chat, created_by_id) VALUES (?, ?, ?)",
+            (name, is_group_chat, user_id),
         )
         conversation_id = c.lastrowid
 
         for pid in participant_ids:
             c.execute(
-                """
-                INSERT INTO conversation_participants (conversation_id, user_id)
-                VALUES (?, ?)
-                """,
+                "INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)",
                 (conversation_id, pid),
             )
 
@@ -73,29 +67,26 @@ def init_messaging_routes(app, socketio):
 
         c.execute(
             """
-            SELECT DISTINCT c.id, c.name, c.is_group_chat, um.unread_count
+            SELECT DISTINCT c.id, c.name, c.is_group_chat
             FROM conversations c
             JOIN conversation_participants cp ON cp.conversation_id = c.id
             LEFT JOIN unread_messages um ON um.conversation_id = c.id AND um.user_id = ?
             WHERE cp.user_id = ?
-            ORDER BY c.last_message_at DESC
+            ORDER BY c.id DESC
             """,
-            (user_id, user_id),
+            (user_id,),
         )
 
         conversations = []
 
         for row in c.fetchall():
-            c.execute(
-                """
+            c.execute("""
                 SELECT u.id, u.email
                 FROM users u
                 JOIN conversation_participants cp
                   ON u.id = cp.user_id
                 WHERE cp.conversation_id = ?
-                """,
-                (row["id"],),
-            )
+            """, (row["id"],))
 
             participants = [
                 {"id": p["id"], "email": p["email"]}
@@ -115,7 +106,6 @@ def init_messaging_routes(app, socketio):
                     "name": name,
                     "is_group_chat": bool(row["is_group_chat"]),
                     "participants": participants,
-                    "unread_count": row["unread_count"] or 0,
                 }
             )
 
@@ -123,82 +113,39 @@ def init_messaging_routes(app, socketio):
         return jsonify(conversations), 200
 
     # =========================
-    # DIRECT CHAT (SAFE)
+    # ✅ GET CONVERSATION PARTICIPANTS (FIX)
     # =========================
-    @app.route("/api/conversations/direct", methods=["POST"])
+    @app.route("/api/conversations/<int:conversation_id>/participants", methods=["GET"])
     @role_required(["employee", "manager", "admin", "super_admin"])
-    def create_direct_conversation():
-        other_user_id = request.json.get("user_id")
+    def get_conversation_participants(conversation_id):
         user_id = session.get("user_id")
 
         conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
-        c.execute(
-            """
-            SELECT c.id
-            FROM conversations c
-            JOIN conversation_participants a ON c.id = a.conversation_id
-            JOIN conversation_participants b ON c.id = b.conversation_id
-            WHERE c.is_group_chat = 0
-              AND a.user_id = ?
-              AND b.user_id = ?
-            """,
-            (user_id, other_user_id),
-        )
+        # Ensure user is part of the conversation
+        c.execute("""
+            SELECT 1 FROM conversation_participants
+            WHERE conversation_id = ? AND user_id = ?
+        """, (conversation_id, user_id))
 
-        existing = c.fetchone()
-        if existing:
+        if not c.fetchone():
             conn.close()
-            return jsonify({"conversation_id": existing[0]}), 200
+            return jsonify({"message": "Forbidden"}), 403
 
-        c.execute(
-            """
-            INSERT INTO conversations (is_group_chat, created_by_id)
-            VALUES (0, ?)
-            """,
-            (user_id,),
-        )
-        convo_id = c.lastrowid
+        c.execute("""
+            SELECT u.id, u.email, u.role
+            FROM users u
+            JOIN conversation_participants cp
+              ON cp.user_id = u.id
+            WHERE cp.conversation_id = ?
+        """, (conversation_id,))
 
-        c.executemany(
-            """
-            INSERT INTO conversation_participants (conversation_id, user_id)
-            VALUES (?, ?)
-            """,
-            [(convo_id, user_id), (convo_id, other_user_id)],
-        )
-
-        conn.commit()
-        conn.close()
-        return jsonify({"conversation_id": convo_id}), 201
-
-    # =========================
-    # DELETE CONVERSATION (SUPER ADMIN ONLY)
-    # =========================
-    @app.route("/api/conversations/<int:conversation_id>", methods=["DELETE"])
-    @role_required(["super_admin"])
-    def delete_conversation(conversation_id):
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-
-        c.execute(
-            "DELETE FROM messages WHERE conversation_id = ?",
-            (conversation_id,),
-        )
-        c.execute(
-            "DELETE FROM conversation_participants WHERE conversation_id = ?",
-            (conversation_id,),
-        )
-        c.execute(
-            "DELETE FROM conversations WHERE id = ?",
-            (conversation_id,),
-        )
-
-        conn.commit()
+        participants = [dict(row) for row in c.fetchall()]
         conn.close()
 
-        return jsonify({"message": "Conversation deleted"}), 200
+        return jsonify(participants), 200
 
     # =========================
     # MESSAGES
@@ -211,13 +158,10 @@ def init_messaging_routes(app, socketio):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        c.execute(
-            """
+        c.execute("""
             SELECT 1 FROM conversation_participants
             WHERE conversation_id = ? AND user_id = ?
-            """,
-            (conversation_id, user_id),
-        )
+        """, (conversation_id, user_id))
 
         if not c.fetchone():
             conn.close()
@@ -225,7 +169,7 @@ def init_messaging_routes(app, socketio):
 
         c.execute(
             """
-            SELECT m.id, m.content, m.created_at, u.email as sender_email, m.status
+            SELECT m.id, m.content, m.created_at, u.email
             FROM messages m
             JOIN users u ON m.sender_id = u.id
             WHERE m.conversation_id = ?
@@ -233,32 +177,16 @@ def init_messaging_routes(app, socketio):
             """,
             (conversation_id,),
         )
-        messages_rows = c.fetchall()
 
-        messages = []
-        for row in messages_rows:
-            message_id = row[0]
-            c.execute(
-                """
-                SELECT u.email
-                FROM users u
-                JOIN message_read_status mrs ON u.id = mrs.user_id
-                WHERE mrs.message_id = ?
-                """,
-                (message_id,),
-            )
-            read_by_users = [r[0] for r in c.fetchall()]
-
-            messages.append(
-                {
-                    "id": message_id,
-                    "content": row[1],
-                    "created_at": row[2],
-                    "sender_email": row[3],
-                    "status": row[4],
-                    "read_by": read_by_users,
-                }
-            )
+        messages = [
+            {
+                "id": r[0],
+                "content": r[1],
+                "created_at": r[2],
+                "sender_email": r[3],
+            }
+            for r in c.fetchall()
+        ]
 
         conn.close()
         return jsonify(messages), 200
@@ -276,9 +204,13 @@ def init_messaging_routes(app, socketio):
         c = conn.cursor()
 
         c.execute(
-            "INSERT INTO messages (conversation_id, sender_id, content) VALUES (?, ?, ?)",
+            """
+            INSERT INTO messages (conversation_id, sender_id, content)
+            VALUES (?, ?, ?)
+            """,
             (conversation_id, user_id, content),
         )
+
         msg_id = c.lastrowid
 
         c.execute(
