@@ -26,6 +26,7 @@ def init_messaging_routes(app, socketio):
 
         participant_ids.append(user_id)
         participant_ids = list(set(participant_ids))
+
         is_group_chat = len(participant_ids) > 2
 
         if is_group_chat and role not in ["manager", "admin", "super_admin"]:
@@ -76,7 +77,8 @@ def init_messaging_routes(app, socketio):
             SELECT DISTINCT c.id, c.name, c.is_group_chat, um.unread_count
             FROM conversations c
             JOIN conversation_participants cp ON cp.conversation_id = c.id
-            LEFT JOIN unread_messages um ON um.conversation_id = c.id AND um.user_id = ?
+            LEFT JOIN unread_messages um
+              ON um.conversation_id = c.id AND um.user_id = ?
             WHERE cp.user_id = ?
             ORDER BY c.last_message_at DESC
             """,
@@ -121,6 +123,91 @@ def init_messaging_routes(app, socketio):
 
         conn.close()
         return jsonify(conversations), 200
+
+    # =========================
+    # GET CONVERSATION PARTICIPANTS (GROUP DETAILS)
+    # =========================
+    @app.route("/api/conversations/<int:conversation_id>/participants", methods=["GET"])
+    @role_required(["employee", "manager", "admin", "super_admin"])
+    def get_participants(conversation_id):
+        user_id = session.get("user_id")
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+
+        # Ensure requester is in conversation
+        c.execute(
+            """
+            SELECT 1 FROM conversation_participants
+            WHERE conversation_id = ? AND user_id = ?
+            """,
+            (conversation_id, user_id),
+        )
+
+        if not c.fetchone():
+            conn.close()
+            return jsonify({"message": "Forbidden"}), 403
+
+        c.execute(
+            """
+            SELECT u.id, u.email, u.role
+            FROM users u
+            JOIN conversation_participants cp ON cp.user_id = u.id
+            WHERE cp.conversation_id = ?
+            """,
+            (conversation_id,),
+        )
+
+        participants = [
+            {"id": row["id"], "email": row["email"], "role": row["role"]}
+            for row in c.fetchall()
+        ]
+
+        conn.close()
+        return jsonify(participants), 200
+
+    # =========================
+    # REMOVE PARTICIPANT (SUPER ADMIN)
+    # =========================
+    @app.route(
+        "/api/conversations/<int:conversation_id>/participants/<int:user_id>",
+        methods=["DELETE"],
+    )
+    @role_required(["super_admin"])
+    def remove_participant(conversation_id, user_id):
+        requester_id = session.get("user_id")
+
+        if requester_id == user_id:
+            return jsonify({"message": "Cannot remove yourself"}), 400
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute(
+            """
+            SELECT 1 FROM conversation_participants
+            WHERE conversation_id = ? AND user_id = ?
+            """,
+            (conversation_id, user_id),
+        )
+
+        if not c.fetchone():
+            conn.close()
+            return jsonify({"message": "User not in conversation"}), 404
+
+        c.execute(
+            """
+            DELETE FROM conversation_participants
+            WHERE conversation_id = ? AND user_id = ?
+            """,
+            (conversation_id, user_id),
+        )
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({"success": True}), 200
 
     # =========================
     # DIRECT CHAT (SAFE)
@@ -171,10 +258,11 @@ def init_messaging_routes(app, socketio):
 
         conn.commit()
         conn.close()
+
         return jsonify({"conversation_id": convo_id}), 201
 
     # =========================
-    # DELETE CONVERSATION (SUPER ADMIN ONLY)
+    # DELETE CONVERSATION (SUPER ADMIN)
     # =========================
     @app.route("/api/conversations/<int:conversation_id>", methods=["DELETE"])
     @role_required(["super_admin"])
@@ -182,18 +270,9 @@ def init_messaging_routes(app, socketio):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
 
-        c.execute(
-            "DELETE FROM messages WHERE conversation_id = ?",
-            (conversation_id,),
-        )
-        c.execute(
-            "DELETE FROM conversation_participants WHERE conversation_id = ?",
-            (conversation_id,),
-        )
-        c.execute(
-            "DELETE FROM conversations WHERE id = ?",
-            (conversation_id,),
-        )
+        c.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        c.execute("DELETE FROM conversation_participants WHERE conversation_id = ?", (conversation_id,))
+        c.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
 
         conn.commit()
         conn.close()
@@ -225,7 +304,7 @@ def init_messaging_routes(app, socketio):
 
         c.execute(
             """
-            SELECT m.id, m.content, m.created_at, u.email as sender_email, m.status
+            SELECT m.id, m.content, m.created_at, u.email, m.status
             FROM messages m
             JOIN users u ON m.sender_id = u.id
             WHERE m.conversation_id = ?
@@ -233,30 +312,16 @@ def init_messaging_routes(app, socketio):
             """,
             (conversation_id,),
         )
-        messages_rows = c.fetchall()
 
         messages = []
-        for row in messages_rows:
-            message_id = row[0]
-            c.execute(
-                """
-                SELECT u.email
-                FROM users u
-                JOIN message_read_status mrs ON u.id = mrs.user_id
-                WHERE mrs.message_id = ?
-                """,
-                (message_id,),
-            )
-            read_by_users = [r[0] for r in c.fetchall()]
-
+        for row in c.fetchall():
             messages.append(
                 {
-                    "id": message_id,
+                    "id": row[0],
                     "content": row[1],
                     "created_at": row[2],
                     "sender_email": row[3],
                     "status": row[4],
-                    "read_by": read_by_users,
                 }
             )
 
@@ -286,22 +351,6 @@ def init_messaging_routes(app, socketio):
             (datetime.utcnow(), conversation_id),
         )
 
-        c.execute("SELECT user_id FROM conversation_participants WHERE conversation_id = ?", (conversation_id,))
-        participant_ids = [row[0] for row in c.fetchall() if row[0] != user_id]
-
-        for pid in participant_ids:
-            c.execute(
-                """
-                INSERT INTO unread_messages (user_id, conversation_id, unread_count)
-                VALUES (?, ?, 1)
-                ON CONFLICT(user_id, conversation_id) DO UPDATE SET unread_count = unread_count + 1
-                """,
-                (pid, conversation_id),
-            )
-
-        c.execute("SELECT created_at FROM messages WHERE id = ?", (msg_id,))
-        created_at = c.fetchone()[0]
-
         c.execute("SELECT email FROM users WHERE id = ?", (user_id,))
         email = c.fetchone()[0]
 
@@ -316,7 +365,6 @@ def init_messaging_routes(app, socketio):
                     "id": msg_id,
                     "content": content,
                     "sender_email": email,
-                    "created_at": created_at,
                 },
             },
             room=f"conversation_{conversation_id}",
@@ -325,83 +373,12 @@ def init_messaging_routes(app, socketio):
         return jsonify({"message_id": msg_id}), 201
 
     # =========================
-    # SOCKETS
+    # SOCKET EVENTS
     # =========================
     @socketio.on("join")
     def on_join(data):
-        join_room(f'conversation_{data["conversation_id"]}')
+        join_room(f"conversation_{data['conversation_id']}")
 
     @socketio.on("leave")
     def on_leave(data):
-        leave_room(f'conversation_{data["conversation_id"]}')
-
-    @socketio.on("mark_as_read")
-    def on_mark_as_read(data):
-        conversation_id = data.get("conversation_id")
-        message_id = data.get("message_id")
-        user_id = session.get("user_id")
-
-        if not all([conversation_id, message_id, user_id]):
-            return
-
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-
-        # Check if the user has already read this message
-        c.execute("SELECT 1 FROM message_read_status WHERE message_id = ? AND user_id = ?", (message_id, user_id))
-        if c.fetchone():
-            conn.close()
-            return
-
-        c.execute(
-            "INSERT INTO message_read_status (message_id, user_id) VALUES (?, ?)",
-            (message_id, user_id),
-        )
-        c.execute("UPDATE messages SET status = 'read' WHERE id = ?", (message_id,))
-        conn.commit()
-
-        c.execute("SELECT email FROM users WHERE id = ?", (user_id,))
-        user_email = c.fetchone()[0]
-
-        conn.close()
-
-        emit("message_status_updated", {"message_id": message_id, "read_by": user_email}, room=f'conversation_{conversation_id}')
-
-    @socketio.on("mark_conversation_as_read")
-    def on_mark_conversation_as_read(data):
-        conversation_id = data.get("conversation_id")
-        user_id = session.get("user_id")
-
-        if not all([conversation_id, user_id]):
-            return
-
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute(
-            "UPDATE unread_messages SET unread_count = 0 WHERE user_id = ? AND conversation_id = ?",
-            (user_id, conversation_id),
-        )
-        conn.commit()
-        conn.close()
-
-
-    @socketio.on("typing")
-    def on_typing(data):
-        conversation_id = data.get("conversation_id")
-        user_id = session.get("user_id")
-
-        if not all([conversation_id, user_id]):
-            return
-
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute("SELECT email FROM users WHERE id = ?", (user_id,))
-        user_email = c.fetchone()[0]
-        conn.close()
-
-        emit("user_typing", {"user_email": user_email}, room=f"conversation_{conversation_id}", include_self=False)
-
-    @socketio.on("stop_typing")
-    def on_stop_typing(data):
-        conversation_id = data.get("conversation_id")
-        emit("user_stopped_typing", room=f"conversation_{conversation_id}", include_self=False)
+        leave_room(f"conversation_{data['conversation_id']}")

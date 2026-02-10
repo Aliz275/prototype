@@ -69,27 +69,25 @@ export default function ChatWindow({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  /* ================= LOAD PARTICIPANTS (DETAILS) ================= */
+  /* ================= LOAD PARTICIPANTS ================= */
   useEffect(() => {
-    if (!showDetails) return;
+    if (!showDetails || !isGroup) return;
 
     fetch(`${API_BASE}/api/conversations/${conversationId}/participants`, {
       credentials: "include",
     })
       .then(res => res.json())
       .then(setParticipants);
-  }, [showDetails, conversationId]);
+  }, [showDetails, conversationId, isGroup]);
 
   /* ================= DELETE / LEAVE ================= */
   async function handleDeleteOrLeave() {
     if (isSuperAdmin) {
-      // Super admin deletes conversation for everyone
       await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
         method: "DELETE",
         credentials: "include",
       });
     } else {
-      // Others just leave
       await fetch(`${API_BASE}/api/conversations/${conversationId}/leave`, {
         method: "POST",
         credentials: "include",
@@ -101,7 +99,9 @@ export default function ChatWindow({
 
   const displayName = isGroup
     ? conversation.name
-    : conversation.participants.find(p => p.email !== currentUser.email)?.email;
+    : conversation.participants.find(
+        p => p.email !== currentUser.email
+      )?.email;
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -109,6 +109,7 @@ export default function ChatWindow({
       <div className="flex items-center justify-between p-4 border-b bg-white">
         <div className="font-semibold truncate">{displayName}</div>
 
+        {/* ✅ DETAILS BUTTON ALWAYS VISIBLE */}
         <button
           onClick={() => setShowDetails(true)}
           className="text-sm text-blue-600 hover:underline"
@@ -153,20 +154,32 @@ export default function ChatWindow({
           <div className="bg-white w-96 rounded-lg p-4 space-y-4">
             <h2 className="font-bold text-lg">Conversation Details</h2>
 
-            {isGroup && (
+            {/* ✅ GROUP MEMBERS */}
+            {isGroup ? (
               <>
                 <div className="font-semibold">Members</div>
                 <ul className="text-sm space-y-1">
                   {participants.map(p => (
-                    <li key={p.id}>
-                      {p.email}
-                      <span className="text-xs text-gray-500 ml-2">
-                        ({p.role})
+                    <li
+                      key={p.id}
+                      className="flex justify-between items-center"
+                    >
+                      <span>
+                        {p.email}
+                        <span className="text-xs text-gray-500 ml-2">
+                          ({p.role})
+                        </span>
                       </span>
+
+                      {/* 🔒 removal logic comes next */}
                     </li>
                   ))}
                 </ul>
               </>
+            ) : (
+              <div className="text-sm text-gray-500">
+                Direct conversation
+              </div>
             )}
 
             <div className="flex justify-end gap-3 pt-4">
