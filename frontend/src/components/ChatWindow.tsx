@@ -12,6 +12,8 @@ type Message = {
   sender_email: string;
   content: string;
   created_at: string;
+  status?: string;
+  read_by?: string[];
 };
 
 type Participant = {
@@ -37,10 +39,9 @@ export default function ChatWindow({
   const [messages, setMessages] = useState<Message[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [showDetails, setShowDetails] = useState(false);
+  const [typingUser, setTypingUser] = useState<string | null>(null);
 
   const conversationId = conversation.id;
-
-  // ✅ SAFE GROUP CHECK (prevents Details from breaking)
   const isGroup = Boolean(conversation.is_group_chat);
   const isSuperAdmin = currentUser.role === "super_admin";
 
@@ -60,16 +61,57 @@ export default function ChatWindow({
       }
     });
 
+    socket.on("user_typing", (data: any) => {
+      setTypingUser(data.user_email);
+    });
+
+    socket.on("user_stopped_typing", () => {
+      setTypingUser(null);
+    });
+
+    socket.on("message_status_updated", (data: any) => {
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === data.message_id
+            ? {
+                ...m,
+                status: "read",
+                read_by: [...(m.read_by || []), data.read_by],
+              }
+            : m
+        )
+      );
+    });
+
     return () => {
       socket.emit("leave", { conversation_id: conversationId });
-      socket.off("new_message");
+      socket.off();
     };
   }, [conversationId, socket]);
 
   /* ================= AUTO SCROLL ================= */
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, typingUser]);
+
+  /* ================= MARK AS READ ================= */
+  useEffect(() => {
+    messages.forEach(msg => {
+      if (
+        msg.sender_email !== currentUser.email &&
+        (!msg.read_by || !msg.read_by.includes(currentUser.email))
+      ) {
+        socket.emit("mark_as_read", {
+          conversation_id: conversationId,
+          message_id: msg.id,
+        });
+      }
+    });
+
+    socket.emit("mark_conversation_as_read", {
+      conversation_id: conversationId,
+    });
+  }, [messages, socket, conversationId, currentUser.email]);
 
   /* ================= LOAD PARTICIPANTS ================= */
   useEffect(() => {
@@ -126,7 +168,6 @@ export default function ChatWindow({
           {displayName || "Conversation"}
         </div>
 
-        {/* ✅ ALWAYS VISIBLE */}
         <button
           onClick={() => setShowDetails(true)}
           className="text-sm text-blue-600 hover:underline"
@@ -154,16 +195,28 @@ export default function ChatWindow({
               }`}
             >
               {msg.content}
+
+              {msg.sender_email === currentUser.email &&
+                msg.status === "read" && (
+                  <div className="text-[10px] text-right opacity-70 mt-1">
+                    Seen
+                  </div>
+                )}
             </div>
           </div>
         ))}
+
+        {typingUser && (
+          <div className="text-xs text-gray-500">
+            {typingUser} is typing…
+          </div>
+        )}
+
         <div ref={bottomRef} />
       </div>
 
       {/* INPUT */}
-      <div className="border-t bg-white p-3">
-        <MessageInput conversationId={conversationId} />
-      </div>
+      <MessageInput conversationId={conversationId} />
 
       {/* DETAILS MODAL */}
       {showDetails && (
@@ -171,7 +224,6 @@ export default function ChatWindow({
           <div className="bg-white w-96 rounded-lg p-4 space-y-4">
             <h2 className="font-bold text-lg">Conversation Details</h2>
 
-            {/* ✅ GROUP MEMBERS */}
             {isGroup ? (
               <>
                 <div className="font-semibold">Members</div>
@@ -188,14 +240,15 @@ export default function ChatWindow({
                         </span>
                       </span>
 
-                      {isSuperAdmin && p.email !== currentUser.email && (
-                        <button
-                          onClick={() => handleRemoveMember(p.id)}
-                          className="text-xs text-red-600 hover:underline"
-                        >
-                          Remove
-                        </button>
-                      )}
+                      {isSuperAdmin &&
+                        p.email !== currentUser.email && (
+                          <button
+                            onClick={() => handleRemoveMember(p.id)}
+                            className="text-xs text-red-600 hover:underline"
+                          >
+                            Remove
+                          </button>
+                        )}
                     </li>
                   ))}
                 </ul>

@@ -153,7 +153,6 @@ export default function ConversationList({
         <span className="font-semibold">💬 Messages</span>
 
         <div className="flex gap-2">
-          {/* Direct message */}
           <button
             onClick={() => {
               reset();
@@ -164,7 +163,6 @@ export default function ConversationList({
             New
           </button>
 
-          {/* Group (super admin only) */}
           {user?.role === "super_admin" && (
             <button
               onClick={() => {
@@ -197,7 +195,6 @@ export default function ConversationList({
             onChange={e => setSearch(e.target.value)}
           />
 
-          {/* USER LIST */}
           <div className="max-h-48 overflow-y-auto border rounded">
             {filteredUsers.map(u => (
               <label
@@ -257,7 +254,13 @@ export default function ConversationList({
           return (
             <li
               key={c.id}
-              onClick={() => onSelect(c.id)}
+              onClick={() => {
+                // ✅ IMPORTANT FIX:
+                // never deselect the active conversation
+                if (!active) {
+                  onSelect(c.id);
+                }
+              }}
               className={`p-4 cursor-pointer flex gap-3 ${
                 active ? "bg-blue-50" : "hover:bg-gray-50"
               }`}
@@ -278,3 +281,4 @@ export default function ConversationList({
     </aside>
   );
 }
+
