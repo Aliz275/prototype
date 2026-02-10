@@ -39,7 +39,9 @@ export default function ChatWindow({
   const [showDetails, setShowDetails] = useState(false);
 
   const conversationId = conversation.id;
-  const isGroup = conversation.is_group_chat;
+
+  // ✅ SAFE GROUP CHECK (prevents Details from breaking)
+  const isGroup = Boolean(conversation.is_group_chat);
   const isSuperAdmin = currentUser.role === "super_admin";
 
   /* ================= LOAD MESSAGES ================= */
@@ -71,14 +73,27 @@ export default function ChatWindow({
 
   /* ================= LOAD PARTICIPANTS ================= */
   useEffect(() => {
-    if (!showDetails || !isGroup) return;
+    if (!showDetails) return;
 
     fetch(`${API_BASE}/api/conversations/${conversationId}/participants`, {
       credentials: "include",
     })
       .then(res => res.json())
       .then(setParticipants);
-  }, [showDetails, conversationId, isGroup]);
+  }, [showDetails, conversationId]);
+
+  /* ================= REMOVE MEMBER ================= */
+  async function handleRemoveMember(userId: number) {
+    await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/participants/${userId}`,
+      {
+        method: "DELETE",
+        credentials: "include",
+      }
+    );
+
+    setParticipants(prev => prev.filter(p => p.id !== userId));
+  }
 
   /* ================= DELETE / LEAVE ================= */
   async function handleDeleteOrLeave() {
@@ -99,7 +114,7 @@ export default function ChatWindow({
 
   const displayName = isGroup
     ? conversation.name
-    : conversation.participants.find(
+    : conversation.participants?.find(
         p => p.email !== currentUser.email
       )?.email;
 
@@ -107,9 +122,11 @@ export default function ChatWindow({
     <div className="flex flex-col h-full bg-gray-50">
       {/* HEADER */}
       <div className="flex items-center justify-between p-4 border-b bg-white">
-        <div className="font-semibold truncate">{displayName}</div>
+        <div className="font-semibold truncate">
+          {displayName || "Conversation"}
+        </div>
 
-        {/* ✅ DETAILS BUTTON ALWAYS VISIBLE */}
+        {/* ✅ ALWAYS VISIBLE */}
         <button
           onClick={() => setShowDetails(true)}
           className="text-sm text-blue-600 hover:underline"
@@ -150,7 +167,7 @@ export default function ChatWindow({
 
       {/* DETAILS MODAL */}
       {showDetails && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
           <div className="bg-white w-96 rounded-lg p-4 space-y-4">
             <h2 className="font-bold text-lg">Conversation Details</h2>
 
@@ -158,7 +175,7 @@ export default function ChatWindow({
             {isGroup ? (
               <>
                 <div className="font-semibold">Members</div>
-                <ul className="text-sm space-y-1">
+                <ul className="text-sm space-y-2">
                   {participants.map(p => (
                     <li
                       key={p.id}
@@ -171,14 +188,21 @@ export default function ChatWindow({
                         </span>
                       </span>
 
-                      {/* 🔒 removal logic comes next */}
+                      {isSuperAdmin && p.email !== currentUser.email && (
+                        <button
+                          onClick={() => handleRemoveMember(p.id)}
+                          className="text-xs text-red-600 hover:underline"
+                        >
+                          Remove
+                        </button>
+                      )}
                     </li>
                   ))}
                 </ul>
               </>
             ) : (
               <div className="text-sm text-gray-500">
-                Direct conversation
+                This is a direct message.
               </div>
             )}
 
