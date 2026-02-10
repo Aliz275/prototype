@@ -37,29 +37,18 @@ export default function ChatWindow({
   const [messages, setMessages] = useState<Message[]>([]);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [showDetails, setShowDetails] = useState(false);
-  const [loading, setLoading] = useState(false);
 
   const conversationId = conversation.id;
-  const isGroup = Boolean(conversation.is_group_chat);
+  const isGroup = conversation.is_group_chat;
   const isSuperAdmin = currentUser.role === "super_admin";
 
   /* ================= LOAD MESSAGES ================= */
   useEffect(() => {
-    async function loadMessages() {
-      try {
-        const res = await fetch(
-          `${API_BASE}/api/conversations/${conversationId}/messages`,
-          { credentials: "include" }
-        );
-        if (!res.ok) return;
-        const data = await res.json();
-        setMessages(data);
-      } catch {
-        // silent fail
-      }
-    }
-
-    loadMessages();
+    fetch(`${API_BASE}/api/conversations/${conversationId}/messages`, {
+      credentials: "include",
+    })
+      .then(res => res.json())
+      .then(setMessages);
 
     socket.emit("join", { conversation_id: conversationId });
 
@@ -80,66 +69,39 @@ export default function ChatWindow({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  /* ================= LOAD PARTICIPANTS ================= */
+  /* ================= LOAD PARTICIPANTS (DETAILS) ================= */
   useEffect(() => {
     if (!showDetails) return;
 
-    async function loadParticipants() {
-      try {
-        const res = await fetch(
-          `${API_BASE}/api/conversations/${conversationId}/participants`,
-          { credentials: "include" }
-        );
-        if (!res.ok) return;
-        const data = await res.json();
-        setParticipants(data);
-      } catch {
-        // silent
-      }
-    }
-
-    loadParticipants();
+    fetch(`${API_BASE}/api/conversations/${conversationId}/participants`, {
+      credentials: "include",
+    })
+      .then(res => res.json())
+      .then(setParticipants);
   }, [showDetails, conversationId]);
 
   /* ================= DELETE / LEAVE ================= */
   async function handleDeleteOrLeave() {
-    const confirmMsg = isSuperAdmin
-      ? "Delete this conversation for everyone?"
-      : isGroup
-      ? "Leave this group?"
-      : "Delete this chat?";
-
-    if (!confirm(confirmMsg)) return;
-
-    setLoading(true);
-
-    try {
-      const url = isSuperAdmin
-        ? `${API_BASE}/api/conversations/${conversationId}`
-        : `${API_BASE}/api/conversations/${conversationId}/leave`;
-
-      const method = isSuperAdmin ? "DELETE" : "POST";
-
-      const res = await fetch(url, {
-        method,
+    if (isSuperAdmin) {
+      // Super admin deletes conversation for everyone
+      await fetch(`${API_BASE}/api/conversations/${conversationId}`, {
+        method: "DELETE",
         credentials: "include",
       });
-
-      if (res.ok) {
-        onDeleted();
-      }
-    } catch {
-      // silent fail
-    } finally {
-      setLoading(false);
+    } else {
+      // Others just leave
+      await fetch(`${API_BASE}/api/conversations/${conversationId}/leave`, {
+        method: "POST",
+        credentials: "include",
+      });
     }
+
+    onDeleted();
   }
 
   const displayName = isGroup
-    ? conversation.name || "Group Chat"
-    : conversation.participants.find(
-        p => p.email !== currentUser.email
-      )?.email || "Direct Chat";
+    ? conversation.name
+    : conversation.participants.find(p => p.email !== currentUser.email)?.email;
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -217,8 +179,7 @@ export default function ChatWindow({
 
               <button
                 onClick={handleDeleteOrLeave}
-                disabled={loading}
-                className="text-red-600 font-semibold text-sm disabled:opacity-50"
+                className="text-red-600 font-semibold text-sm"
               >
                 {isSuperAdmin
                   ? "Delete Conversation"
@@ -233,4 +194,3 @@ export default function ChatWindow({
     </div>
   );
 }
-
